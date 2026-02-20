@@ -165,6 +165,49 @@ func serveCommand(cfg *config.Config) *cli.Command {
 					return
 				}
 
+				if path == "/api/admin/users" {
+					if r.Method == "GET" {
+						h.AdminListUsers(w, r)
+						return
+					}
+					if r.Method == "POST" {
+						h.AdminCreateUser(w, r)
+						return
+					}
+				}
+
+				if strings.HasPrefix(path, "/api/admin/users/") {
+					username := strings.TrimPrefix(path, "/api/admin/users/")
+					if username == "" {
+						http.NotFound(w, r)
+						return
+					}
+
+					if r.Method == "POST" && strings.HasSuffix(username, "/activate") {
+						username = strings.TrimSuffix(username, "/activate")
+						h.AdminActivateUser(w, r, username)
+						return
+					}
+
+					if r.Method == "POST" && strings.HasSuffix(username, "/deactivate") {
+						username = strings.TrimSuffix(username, "/deactivate")
+						h.AdminDeactivateUser(w, r, username)
+						return
+					}
+
+					if r.Method == "POST" && strings.HasSuffix(username, "/password") {
+						username = strings.TrimSuffix(username, "/password")
+						h.AdminSetUserPassword(w, r, username)
+						return
+					}
+
+					if r.Method == "PATCH" && strings.HasSuffix(username, "/role") {
+						username = strings.TrimSuffix(username, "/role")
+						h.AdminSetUserRole(w, r, username)
+						return
+					}
+				}
+
 				if path == "/api/shorts" && r.Method == "GET" {
 					h.ListShorts(w, r)
 					return

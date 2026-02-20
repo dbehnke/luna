@@ -19,6 +19,7 @@ import (
 	"luna/internal/meta"
 	"luna/internal/models"
 	"luna/internal/storage"
+	"luna/internal/useradmin"
 
 	"gorm.io/gorm"
 )
@@ -1103,6 +1104,16 @@ type CurrentUserResponse struct {
 	IsActive bool   `json:"is_active"`
 }
 
+type AdminUserResponse struct {
+	ID            uint    `json:"id"`
+	Username      string  `json:"username"`
+	Role          string  `json:"role"`
+	IsActive      bool    `json:"is_active"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	DeactivatedAt *string `json:"deactivated_at,omitempty"`
+}
+
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -1202,6 +1213,290 @@ func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		Role:     user.Role,
 		IsActive: user.IsActive,
 	})
+}
+
+func (h *Handler) requireAdmin(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	if !user.IsActive {
+		http.Error(w, "Account is deactivated", http.StatusForbidden)
+		return nil, false
+	}
+	if user.Role != models.RoleAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return nil, false
+	}
+	return user, true
+}
+
+func userToAdminResponse(user models.User) AdminUserResponse {
+	var deactivatedAt *string
+	if user.DeactivatedAt != nil {
+		ts := user.DeactivatedAt.UTC().Format(time.RFC3339)
+		deactivatedAt = &ts
+	}
+	return AdminUserResponse{
+		ID:            user.ID,
+		Username:      user.Username,
+		Role:          user.Role,
+		IsActive:      user.IsActive,
+		CreatedAt:     user.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:     user.UpdatedAt.UTC().Format(time.RFC3339),
+		DeactivatedAt: deactivatedAt,
+	}
+}
+
+type CreateAdminUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+func (h *Handler) AdminListUsers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	query := h.db.Model(&models.User{})
+
+	switch status {
+	case "", "all":
+	case "active":
+		query = query.Where("is_active = ?", true)
+	case "inactive":
+		query = query.Where("is_active = ?", false)
+	default:
+		http.Error(w, "Invalid status filter", http.StatusBadRequest)
+		return
+	}
+
+	var users []models.User
+	if err := query.Order("id ASC").Find(&users).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list users: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]AdminUserResponse, 0, len(users))
+	for _, user := range users {
+		resp = append(resp, userToAdminResponse(user))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"users": resp,
+	})
+}
+
+func (h *Handler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req CreateAdminUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || strings.TrimSpace(req.Password) == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	role := req.Role
+	if strings.TrimSpace(role) == "" {
+		role = models.RoleUser
+	}
+	role, err := useradmin.NormalizeRole(role)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var existing models.User
+	if err := h.db.Where("username = ?", req.Username).First(&existing).Error; err == nil {
+		http.Error(w, "Username already exists", http.StatusConflict)
+		return
+	}
+
+	passwordHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	user := models.User{
+		Username:     req.Username,
+		PasswordHash: passwordHash,
+		Role:         role,
+		IsActive:     true,
+	}
+	if err := h.db.Create(&user).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(userToAdminResponse(user))
+}
+
+type SetAdminUserRoleRequest struct {
+	Role string `json:"role"`
+}
+
+func (h *Handler) AdminSetUserRole(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req SetAdminUserRoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	role, err := useradmin.NormalizeRole(req.Role)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if user.Role == role {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(userToAdminResponse(user))
+		return
+	}
+	if err := useradmin.EnsureCanChangeRole(h.db, user, role); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	if err := h.db.Model(&user).Update("role", role).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update role: %v", err), http.StatusInternalServerError)
+		return
+	}
+	user.Role = role
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(userToAdminResponse(user))
+}
+
+func (h *Handler) AdminDeactivateUser(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !user.IsActive {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(userToAdminResponse(user))
+		return
+	}
+	if err := useradmin.EnsureCanDeactivate(h.db, user); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	now := time.Now().UTC()
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
+		"is_active":      false,
+		"deactivated_at": now,
+	}).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to deactivate user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
+
+	user.IsActive = false
+	user.DeactivatedAt = &now
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(userToAdminResponse(user))
+}
+
+func (h *Handler) AdminActivateUser(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if user.IsActive {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(userToAdminResponse(user))
+		return
+	}
+
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
+		"is_active":      true,
+		"deactivated_at": nil,
+	}).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to activate user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	user.IsActive = true
+	user.DeactivatedAt = nil
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(userToAdminResponse(user))
+}
+
+type ResetAdminUserPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+func (h *Handler) AdminSetUserPassword(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req ResetAdminUserPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Password) == "" {
+		http.Error(w, "password is required", http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	passwordHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Model(&user).Update("password_hash", passwordHash).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update password: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 type CreatePersonaRequest struct {
