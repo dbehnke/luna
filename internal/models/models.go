@@ -12,6 +12,9 @@ const (
 	RoleUser  = "user"
 )
 
+// CurrentDBSchemaVersion is the current database schema version
+const CurrentDBSchemaVersion = 1
+
 // MediaType constants
 const (
 	MediaTypeVideo = "video"
@@ -137,4 +140,10 @@ type Reaction struct {
 	Value     int       `gorm:"not null" json:"value"` // -1 (down), 0 (none), 1 (up)
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SchemaVersion stores the current schema version for migrations
+type SchemaVersion struct {
+	Key   string `gorm:"primaryKey;size:100" json:"key"`
+	Value int    `gorm:"not null" json:"value"`
 }

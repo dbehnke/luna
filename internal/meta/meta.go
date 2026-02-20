@@ -10,14 +10,39 @@ import (
 )
 
 const (
-	SchemaVersion  = 1
-	ItemMetaFile   = "item.json"
-	AssetsMetaFile = "assets.json"
+	SchemaVersion       = 1
+	CurrentItemSchema   = 1
+	CurrentAssetsSchema = 1
+	ItemMetaFile        = "item.json"
+	AssetsMetaFile      = "assets.json"
 )
 
 var (
 	ErrInvalidSchema = errors.New("invalid or missing schema version")
 )
+
+const DBSchemaVersionKey = "db_schema_version"
+
+func ValidateSchema(schema int) error {
+	if schema != SchemaVersion {
+		return fmt.Errorf("%w: got %d, want %d", ErrInvalidSchema, schema, SchemaVersion)
+	}
+	return nil
+}
+
+func ValidateItemSchema(schema int) error {
+	if schema != CurrentItemSchema {
+		return fmt.Errorf("%w: got %d, want %d", ErrInvalidSchema, schema, CurrentItemSchema)
+	}
+	return nil
+}
+
+func ValidateAssetsSchema(schema int) error {
+	if schema != CurrentAssetsSchema {
+		return fmt.Errorf("%w: got %d, want %d", ErrInvalidSchema, schema, CurrentAssetsSchema)
+	}
+	return nil
+}
 
 type ItemMeta struct {
 	Schema             int          `json:"schema"`

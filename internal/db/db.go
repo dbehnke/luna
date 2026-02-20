@@ -41,6 +41,7 @@ func (d *DB) AutoMigrate() error {
 		&models.Job{},
 		&models.ClipAsset{},
 		&models.Reaction{},
+		&models.SchemaVersion{},
 	)
 }
 
@@ -58,4 +59,33 @@ func (d *DB) Close() error {
 		return err
 	}
 	return sqlDB.Close()
+}
+
+func (d *DB) GetSchemaVersion(key string) (int, error) {
+	var sv models.SchemaVersion
+	err := d.DB.Where("key = ?", key).First(&sv).Error
+	if err != nil {
+		return 0, err
+	}
+	return sv.Value, nil
+}
+
+func (d *DB) SetSchemaVersion(key string, value int) error {
+	sv := models.SchemaVersion{Key: key, Value: value}
+	return d.DB.Save(&sv).Error
+}
+
+func (d *DB) EnsureSchemaVersion(key string, expected int) error {
+	var sv models.SchemaVersion
+	err := d.DB.Where("key = ?", key).First(&sv).Error
+	if err == gorm.ErrRecordNotFound {
+		return d.SetSchemaVersion(key, expected)
+	}
+	if err != nil {
+		return err
+	}
+	if sv.Value != expected {
+		return fmt.Errorf("schema version mismatch for %s: got %d, expected %d", key, sv.Value, expected)
+	}
+	return nil
 }
