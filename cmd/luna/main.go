@@ -1800,7 +1800,8 @@ func doctorCommand(cfg *config.Config) *cli.Command {
 				logging.Info.Printf("  %s/: %v", dir, exists)
 			}
 
-			logging.Info.Printf("SQLITE_PATH dir exists: %v", dirExists(dir(cfg.SQLitePath)))
+			sqliteDir := dir(cfg.SQLitePath)
+			logging.Info.Printf("SQLITE_PATH dir exists: %v (%s)", dirExists(sqliteDir), sqliteDir)
 
 			storageReport, err := report.GenerateStorageReport(cfg.MediaRoot, cfg.SQLitePath)
 			if err != nil {
@@ -1918,7 +1919,7 @@ func doctorCommand(cfg *config.Config) *cli.Command {
 					metaPath := filepath.Join(itemsDir, itemID, "meta", "item.json")
 
 					var count int64
-					database.Model(&models.MediaItem{}).Where("id = ?", itemID).Count(&count)
+					database.Unscoped().Model(&models.MediaItem{}).Where("id = ?", itemID).Count(&count)
 					if count == 0 {
 						if _, err := os.Stat(metaPath); err == nil {
 							orphanMeta++
@@ -2423,11 +2424,7 @@ func dir(path string) string {
 	if path == "" {
 		return "."
 	}
-	last := len(path) - 1
-	if path[last] == '/' {
-		return path[:last]
-	}
-	return path
+	return filepath.Dir(path)
 }
 
 func extractItemID(payloadJSON string) string {
