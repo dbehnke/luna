@@ -263,9 +263,8 @@
                 v-if="clip.status === 'ready'"
                 :src="clip.video_url"
                 class="w-full h-full object-cover"
-                muted
-                @mouseenter="$event.target.play()"
-                @mouseleave="$event.target.pause()"
+                @mouseenter="previewClipHover($event)"
+                @mouseleave="previewClipLeave($event)"
               ></video>
               <div v-else class="flex flex-col items-center text-gray-400">
                 <div class="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mb-2"></div>
@@ -337,6 +336,8 @@ const hlsPlayer = ref(null)
 let hlsModulePromise = null
 let statusPollTimer = null
 let statusPollInFlight = false
+let clipsPollTimer = null
+let clipsPollInFlight = false
 const editing = ref(false)
 const savingEdit = ref(false)
 const reprocessing = ref(false)
@@ -441,6 +442,7 @@ watch(
 onMounted(loadItem)
 onUnmounted(() => {
   stopStatusPolling()
+  stopClipsPolling()
   if (hlsPlayer.value) {
     hlsPlayer.value.destroy()
     hlsPlayer.value = null
@@ -466,6 +468,40 @@ function stopStatusPolling() {
     clearTimeout(statusPollTimer)
     statusPollTimer = null
   }
+}
+
+function shouldPollClips() {
+  if (!item.value || item.value.type !== 'video') return false
+  return clips.value.some(c => c.status !== 'ready' && c.status !== 'failed')
+}
+
+function stopClipsPolling() {
+  if (clipsPollTimer) {
+    clearTimeout(clipsPollTimer)
+    clipsPollTimer = null
+  }
+}
+
+function scheduleClipsPolling() {
+  stopClipsPolling()
+  if (!shouldPollClips()) return
+
+  clipsPollTimer = setTimeout(async () => {
+    if (clipsPollInFlight) {
+      scheduleClipsPolling()
+      return
+    }
+
+    clipsPollInFlight = true
+    try {
+      await loadClips()
+    } catch (_) {
+      // ignore transient polling errors
+    } finally {
+      clipsPollInFlight = false
+      scheduleClipsPolling()
+    }
+  }, 2500)
 }
 
 function scheduleStatusPolling() {
@@ -521,6 +557,7 @@ async function loadClips() {
   try {
     const result = await getItemClips(route.params.id)
     clips.value = result.clips || []
+    scheduleClipsPolling()
   } catch (e) {
     console.error('Failed to load clips:', e)
   }
@@ -637,7 +674,28 @@ async function removeClip(clipId) {
     clipError.value = e.message
   } finally {
     deletingClipId.value = ''
+    scheduleClipsPolling()
   }
+}
+
+function previewClipHover(event) {
+  const video = event?.target
+  if (!(video instanceof HTMLVideoElement)) return
+  video.muted = false
+  const playPromise = video.play()
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {
+      video.muted = true
+      void video.play().catch(() => {})
+    })
+  }
+}
+
+function previewClipLeave(event) {
+  const video = event?.target
+  if (!(video instanceof HTMLVideoElement)) return
+  video.pause()
+  video.currentTime = 0
 }
 
 </script>
