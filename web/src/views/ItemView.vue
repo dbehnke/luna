@@ -44,8 +44,7 @@
             playsinline
             class="max-h-full"
           >
-            <source v-if="!hlsPlayer && item.hls_url" :src="item.hls_url" />
-            <source v-else-if="item.master_url" :src="item.master_url" />
+            <source v-if="item.master_url" :src="item.master_url" />
             Your browser does not support video playback.
           </video>
           <div
@@ -305,7 +304,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
@@ -417,9 +416,14 @@ async function initHLS() {
   }
 }
 
-watch(() => item.value?.hls_url, () => {
-  void initHLS()
-})
+watch(
+  () => item.value?.hls_url,
+  async () => {
+    await nextTick()
+    await initHLS()
+  },
+  { flush: 'post' }
+)
 
 onMounted(loadItem)
 onUnmounted(() => {
@@ -436,6 +440,8 @@ async function loadItem() {
   try {
     currentUser.value = await getCurrentUser()
     item.value = await getItem(route.params.id)
+    await nextTick()
+    await initHLS()
     if (item.value.type === 'video') {
       await loadClips()
     }
