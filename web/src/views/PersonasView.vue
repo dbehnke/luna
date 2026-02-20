@@ -44,13 +44,38 @@
           <h3 class="text-sm font-medium text-gray-400">Your Personas</h3>
           <div
             v-for="persona in personas"
-            :key="persona.persona_id"
+            :key="persona.id"
             class="flex items-center justify-between bg-gray-800 rounded-lg p-4"
           >
             <div class="flex items-center gap-3">
-              <span class="w-10 h-10 rounded-full bg-purple-600 flex items-center justify-center text-white font-medium">
-                {{ getInitials(persona.display_name) }}
-              </span>
+              <div class="relative">
+                <img
+                  v-if="persona.avatar_url"
+                  :src="persona.avatar_url"
+                  class="w-10 h-10 rounded-full object-cover"
+                  alt="Avatar"
+                />
+                <span
+                  v-else
+                  class="w-10 h-10 rounded-full bg-purple-600 flex items-center justify-center text-white font-medium"
+                >
+                  {{ getInitials(persona.display_name) }}
+                </span>
+                <label
+                  class="absolute -bottom-1 -right-1 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700"
+                >
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    class="hidden"
+                    @change="(e) => handleAvatarUpload(persona.id, e)"
+                  />
+                  <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </label>
+              </div>
               <span class="text-white font-medium">{{ persona.display_name }}</span>
             </div>
           </div>
@@ -62,13 +87,14 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getPersonas, createPersona } from '../services/api'
+import { getPersonas, createPersona, uploadPersonaAvatar } from '../services/api'
 
 const personas = ref([])
 const loading = ref(true)
 const error = ref('')
 const newPersonaName = ref('')
 const creating = ref(false)
+const uploading = ref(false)
 
 async function loadPersonas() {
   loading.value = true
@@ -98,6 +124,24 @@ async function doCreatePersona() {
     error.value = e.message
   } finally {
     creating.value = false
+  }
+}
+
+async function handleAvatarUpload(personaId, event) {
+  const file = event.target.files[0]
+  if (!file) return
+  
+  uploading.value = true
+  error.value = ''
+  
+  try {
+    const result = await uploadPersonaAvatar(personaId, file)
+    await loadPersonas()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    uploading.value = false
+    event.target.value = ''
   }
 }
 

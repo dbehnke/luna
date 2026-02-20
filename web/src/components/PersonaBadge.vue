@@ -6,7 +6,17 @@
       variant === 'compact' ? 'text-xs' : 'text-sm'
     ]"
   >
+    <img
+      v-if="avatarUrl"
+      :src="avatarUrl"
+      :class="[
+        'rounded-full object-cover',
+        variant === 'compact' ? 'w-5 h-5' : 'w-6 h-6'
+      ]"
+      alt="Avatar"
+    />
     <span
+      v-else
       :class="[
         'rounded-full flex items-center justify-center font-medium',
         variant === 'compact' ? 'w-5 h-5 text-[10px]' : 'w-6 h-6 text-xs',
@@ -46,6 +56,10 @@ import { computed } from 'vue'
 
 const props = defineProps({
   displayName: {
+    type: String,
+    default: null
+  },
+  avatarUrl: {
     type: String,
     default: null
   },

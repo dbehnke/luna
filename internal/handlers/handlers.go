@@ -812,6 +812,7 @@ type PersonaResponse struct {
 	UserID      uint   `json:"user_id"`
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	AvatarURL   string `json:"avatar_url"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -859,13 +860,7 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(PersonaResponse{
-		ID:          persona.ID,
-		UserID:      persona.UserID,
-		DisplayName: persona.DisplayName,
-		Slug:        persona.Slug,
-		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
-	})
+	json.NewEncoder(w).Encode(personaToResponse(persona))
 }
 
 func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
@@ -883,13 +878,7 @@ func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
 
 	responses := make([]PersonaResponse, len(personas))
 	for i, p := range personas {
-		responses[i] = PersonaResponse{
-			ID:          p.ID,
-			UserID:      p.UserID,
-			DisplayName: p.DisplayName,
-			Slug:        p.Slug,
-			CreatedAt:   p.CreatedAt.Format(time.RFC3339),
-		}
+		responses[i] = personaToResponse(p)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -953,13 +942,7 @@ func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaI
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(PersonaResponse{
-		ID:          persona.ID,
-		UserID:      persona.UserID,
-		DisplayName: persona.DisplayName,
-		Slug:        persona.Slug,
-		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
-	})
+	json.NewEncoder(w).Encode(personaToResponse(persona))
 }
 
 func (h *Handler) DeletePersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1020,13 +1003,113 @@ func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request, personaID s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(PersonaResponse{
-		ID:          persona.ID,
-		UserID:      persona.UserID,
-		DisplayName: persona.DisplayName,
-		Slug:        persona.Slug,
-		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
-	})
+	json.NewEncoder(w).Encode(personaToResponse(persona))
 }
 
-var _ = io.Discard
+func avatarURL(avatarPath string) string {
+	if avatarPath == "" {
+		return ""
+	}
+	return "/media/" + avatarPath
+}
+
+func personaToResponse(p models.Persona) PersonaResponse {
+	return PersonaResponse{
+		ID:          p.ID,
+		UserID:      p.UserID,
+		DisplayName: p.DisplayName,
+		Slug:        p.Slug,
+		AvatarURL:   avatarURL(p.AvatarPath),
+		CreatedAt:   p.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+type UploadAvatarResponse struct {
+	AvatarURL string `json:"avatar_url"`
+}
+
+func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if personaID == "" {
+		http.Error(w, "Persona ID required", http.StatusBadRequest)
+		return
+	}
+
+	var persona models.Persona
+	if err := h.db.First(&persona, "id = ?", personaID).Error; err != nil {
+		http.Error(w, "Persona not found", http.StatusNotFound)
+		return
+	}
+
+	if persona.UserID != user.ID {
+		http.Error(w, "Forbidden - you can only upload avatars for your own personas", http.StatusForbidden)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "No file uploaded", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+		http.Error(w, "Invalid file type: must be jpeg, png, or webp", http.StatusBadRequest)
+		return
+	}
+
+	if header.Size > 5*1024*1024 {
+		http.Error(w, "File too large: maximum 5MB", http.StatusBadRequest)
+		return
+	}
+
+	if err := storage.EnsureAvatarDir(h.mediaRoot, user.ID, personaID); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create avatar directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	tmpDir := storage.TmpUploadsDir(h.mediaRoot)
+	tmpPath := filepath.Join(tmpDir, fmt.Sprintf("avatar-%s-%d%s", personaID, time.Now().UnixNano(), ext))
+
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temp file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := io.Copy(tmpFile, file); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	tmpFile.Close()
+
+	avatarPath := storage.AvatarPath(h.mediaRoot, user.ID, personaID)
+
+	if err := os.Rename(tmpPath, avatarPath); err != nil {
+		os.Remove(tmpPath)
+		http.Error(w, fmt.Sprintf("Failed to save avatar: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	relPath := storage.AvatarRelativePath(user.ID, personaID)
+	persona.AvatarPath = relPath
+	persona.UpdatedAt = time.Now()
+
+	if err := h.db.Save(&persona).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update persona: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(UploadAvatarResponse{
+		AvatarURL: avatarURL(relPath),
+	})
+}

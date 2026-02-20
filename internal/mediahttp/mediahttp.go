@@ -15,14 +15,16 @@ var (
 )
 
 type MediaHandler struct {
-	mediaRoot string
-	itemsDir  string
+	mediaRoot  string
+	itemsDir   string
+	avatarsDir string
 }
 
 func New(mediaRoot string) *MediaHandler {
 	return &MediaHandler{
-		mediaRoot: mediaRoot,
-		itemsDir:  filepath.Join(mediaRoot, "items"),
+		mediaRoot:  mediaRoot,
+		itemsDir:   filepath.Join(mediaRoot, "items"),
+		avatarsDir: filepath.Join(mediaRoot, "avatars"),
 	}
 }
 
@@ -45,9 +47,16 @@ func (h *MediaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(h.itemsDir, path)
+	var baseDir string
+	if strings.HasPrefix(path, "avatars/") {
+		baseDir = h.avatarsDir
+	} else {
+		baseDir = h.itemsDir
+	}
 
-	absItemsDir, err := filepath.Abs(h.itemsDir)
+	filePath := filepath.Join(baseDir, path)
+
+	absBaseDir, err := filepath.Abs(baseDir)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -59,7 +68,7 @@ func (h *MediaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !strings.HasPrefix(absFilePath, absItemsDir+string(filepath.Separator)) && absFilePath != absItemsDir {
+	if !strings.HasPrefix(absFilePath, absBaseDir+string(filepath.Separator)) && absFilePath != absBaseDir {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}

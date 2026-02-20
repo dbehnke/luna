@@ -10,6 +10,13 @@ export function getPersonaDisplayName(item) {
   return null
 }
 
+export function getPersonaAvatarUrl(item) {
+  if (item.persona && typeof item.persona === 'object') {
+    return item.persona.avatar_url || null
+  }
+  return null
+}
+
 export async function createItem(type, title = '', description = '', personaId = null) {
   const res = await fetch(`${API_BASE}/api/items`, {
     method: 'POST',
@@ -112,5 +119,17 @@ export async function createPersona(displayName) {
     body: JSON.stringify({ display_name: displayName })
   })
   if (!res.ok) throw new Error('Failed to create persona')
+  return res.json()
+}
+
+export async function uploadPersonaAvatar(personaId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  
+  const res = await fetch(`${API_BASE}/api/personas/${personaId}/avatar`, {
+    method: 'POST',
+    body: formData
+  })
+  if (!res.ok) throw new Error('Failed to upload avatar')
   return res.json()
 }

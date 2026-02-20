@@ -71,6 +71,7 @@
               <PersonaBadge
                 v-if="selectedPersonaId !== null"
                 :display-name="selectedPersona?.display_name"
+                :avatar-url="selectedPersona?.avatar_url"
               />
             </div>
           </div>
@@ -164,7 +165,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { createItem, uploadFile, getPersonas } from '../services/api'
+import { createItem, uploadFile, getPersonas, getPersonaAvatarUrl } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const router = useRouter()

@@ -57,7 +57,7 @@
           <div class="mb-2">
             <h3 class="text-white font-bold text-lg">{{ clip.title }}</h3>
             <div class="flex items-center gap-2 mt-1">
-              <PersonaBadge :display-name="getPersonaDisplayName(clip)" variant="overlay" />
+              <PersonaBadge :display-name="getPersonaDisplayName(clip)" :avatar-url="getPersonaAvatarUrl(clip)" variant="overlay" />
             </div>
           </div>
           
@@ -105,7 +105,7 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { listShorts, setReaction, getPersonaDisplayName } from '../services/api'
+import { listShorts, setReaction, getPersonaDisplayName, getPersonaAvatarUrl } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const clips = ref([])
