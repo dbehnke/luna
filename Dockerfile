@@ -29,15 +29,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HTTP_ADDR=:8080 \
     VIDEO_TRANSCODE_CONCURRENCY=1
 
+WORKDIR /app
+# Copying from go-builder first makes runtime depend on build stages,
+# which prevents BuildKit from running apt install in parallel with frontend build.
+COPY --from=go-builder /out/luna /usr/local/bin/luna
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
        ffmpeg \
        tzdata \
     && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-COPY --from=go-builder /out/luna /usr/local/bin/luna
 
 RUN mkdir -p /data/media/items /data/media/tmp /data/media/avatars /data/db
 
