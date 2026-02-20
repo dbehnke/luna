@@ -107,7 +107,7 @@ Refer to root `README.md` for full flags and examples.
 - Preserve backward compatibility in metadata format where possible.
 - Validate with both:
   - `go test ./...`
-  - `cd web && bun run build`
+  - `cd web && bun run build` (or `cd web && npm run build`)
 - Prefer incremental commits with clear scope.
 
 ## 9. Current Gaps / Forward Work
