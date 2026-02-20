@@ -641,6 +641,10 @@ func (p *Processor) ProcessHLS(itemID string) error {
 			})
 		}
 	}
+	// HLSArgs currently emits one stable variant for reliability (highest <= source height).
+	if len(hlsVariants) > 1 {
+		hlsVariants = hlsVariants[len(hlsVariants)-1:]
+	}
 
 	assetsMeta, err = meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
 	if err != nil && !os.IsNotExist(err) {

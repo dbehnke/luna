@@ -204,66 +204,25 @@ func HLSArgs(inPath string, outDir string, variants []HLSVariant, sourceWidth, s
 		filteredVariants = []HLSVariant{{Height: sourceHeight, Bandwidth: 2500000}}
 	}
 
-	numVariants := len(filteredVariants)
-
-	if numVariants == 1 {
-		v := filteredVariants[0]
-		return []string{
-			"-y",
-			"-i", inPath,
-			"-c:v", "libx264",
-			"-preset", "medium",
-			"-crf", "23",
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-vf", fmt.Sprintf("scale=-2:%d", v.Height),
-			"-f", "hls",
-			"-hls_time", "6",
-			"-hls_playlist_type", "vod",
-			"-hls_segment_filename", fmt.Sprintf("%s/seg_%%03d.ts", outDir),
-			"-hls_list_size", "0",
-			"-master_pl_name", "index.m3u8",
-			fmt.Sprintf("%s/playlist.m3u8", outDir),
-		}
+	// Use a single stable variant for MVP reliability.
+	v := filteredVariants[len(filteredVariants)-1]
+	return []string{
+		"-y",
+		"-i", inPath,
+		"-c:v", "libx264",
+		"-preset", "medium",
+		"-crf", "23",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-vf", fmt.Sprintf("scale=-2:%d", v.Height),
+		"-f", "hls",
+		"-hls_time", "6",
+		"-hls_playlist_type", "vod",
+		"-hls_segment_filename", fmt.Sprintf("%s/seg_%%03d.ts", outDir),
+		"-hls_list_size", "0",
+		"-master_pl_name", "index.m3u8",
+		fmt.Sprintf("%s/playlist.m3u8", outDir),
 	}
-
-	args := []string{"-y", "-i", inPath}
-
-	scaleExprs := make([]string, numVariants)
-	varStreamMap := make([]string, numVariants)
-	segmentFiles := make([]string, numVariants)
-	playlistFiles := make([]string, numVariants)
-
-	for i, v := range filteredVariants {
-		scaleExprs[i] = fmt.Sprintf("scale=-2:%d", v.Height)
-		varStreamMap[i] = fmt.Sprintf("v:%d,a:%d", i, i)
-		segmentFiles[i] = fmt.Sprintf("%s/v%d_%%03d.ts", outDir, i)
-		playlistFiles[i] = fmt.Sprintf("%s/v%d.m3u8", outDir, i)
-		args = append(args, "-filter_complex", fmt.Sprintf("[0:v]scale=-2:%d[v%d]", v.Height, i))
-	}
-
-	for i, v := range filteredVariants {
-		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
-		args = append(args, "-map", "0:a")
-		args = append(args, "-c:v", "libx264")
-		args = append(args, "-preset", "medium")
-		args = append(args, "-crf", "23")
-		args = append(args, "-b:v", fmt.Sprintf("%dk", v.Bandwidth/1000))
-		args = append(args, "-c:a", "aac")
-		args = append(args, "-b:a", "128k")
-		args = append(args, "-f", "hls")
-		args = append(args, "-hls_time", "6")
-		args = append(args, "-hls_playlist_type", "vod")
-		args = append(args, "-hls_segment_filename", segmentFiles[i])
-		args = append(args, "-hls_list_size", "0")
-		args = append(args, "-var_stream_map", varStreamMap[i])
-		if i == 0 {
-			args = append(args, "-master_pl_name", "index.m3u8")
-		}
-		args = append(args, playlistFiles[i])
-	}
-
-	return args
 }
 
 // AudioTranscodeArgs builds ffmpeg arguments for transcoding audio to master M4A.
