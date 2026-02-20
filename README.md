@@ -204,6 +204,39 @@ task dev
 task build
 ```
 
+## Docker
+
+Build image:
+
+```bash
+docker build -t luna:local .
+```
+
+Run with Compose (server + worker):
+
+```bash
+docker compose up -d --build
+```
+
+Services in `docker-compose.yml`:
+
+- `server`: runs `luna serve`, exposes `8080`
+- `worker`: runs `luna worker --id worker-1`
+- host media bind mount: `${LUNA_MEDIA_ROOT_HOST}` -> `/data/media` (use your host NFS mount path)
+- host DB bind mount: `${LUNA_DB_ROOT_HOST}` -> `/data/db` (local host directory)
+
+Compose defaults:
+
+- `LUNA_MEDIA_ROOT_HOST=/mnt/nfs/luna-media`
+- `LUNA_DB_ROOT_HOST=./docker-data/db`
+
+Container runtime paths:
+
+- `MEDIA_ROOT=/data/media`
+- `SQLITE_PATH=/data/db/app.sqlite`
+
+The Docker build uses Bun only in the frontend build stage, then copies built assets into the Go build stage, and runs on a runtime image with `ffmpeg` installed.
+
 ## Operational Notes
 
 - ffmpeg/ffprobe are required for media processing features.
