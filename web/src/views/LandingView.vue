@@ -45,10 +45,10 @@
           Upload
         </router-link>
         <router-link
-          to="/personas"
+          to="/me/profile"
           class="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors"
         >
-          Personas
+          Profile
         </router-link>
         <router-link
           v-if="isAdmin"

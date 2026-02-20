@@ -100,10 +100,16 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 
 	if req.PersonaID != nil && *req.PersonaID != "" {
 		var persona models.Persona
-		if err := h.db.First(&persona, "id = ?", *req.PersonaID).Error; err == nil && persona.UserID == user.ID {
-			personaID = &persona.ID
-			personaDisplayName = &persona.DisplayName
+		if err := h.db.First(&persona, "id = ?", *req.PersonaID).Error; err != nil {
+			http.Error(w, "Invalid persona_id", http.StatusBadRequest)
+			return
 		}
+		if persona.UserID != user.ID {
+			http.Error(w, "Forbidden - persona is not owned by current user", http.StatusForbidden)
+			return
+		}
+		personaID = &persona.ID
+		personaDisplayName = &persona.DisplayName
 	}
 
 	mediaItem := models.MediaItem{

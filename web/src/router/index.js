@@ -37,7 +37,12 @@ const router = createRouter({
     {
       path: "/personas",
       name: "personas",
-      component: () => import("../views/PersonasView.vue"),
+      redirect: "/me/profile",
+    },
+    {
+      path: "/me/profile",
+      name: "account-profile",
+      component: () => import("../views/AccountView.vue"),
     },
     {
       path: "/@:slug",

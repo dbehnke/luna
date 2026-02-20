@@ -49,7 +49,10 @@ export async function createItem(
       persona_id: personaId,
     }),
   });
-  if (!res.ok) throw new Error("Failed to create item");
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to create item");
+  }
   return res.json();
 }
 
@@ -61,7 +64,10 @@ export async function uploadFile(itemId, file) {
     method: "POST",
     body: formData,
   });
-  if (!res.ok) throw new Error("Failed to upload file");
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to upload file");
+  }
   return res.json();
 }
 
