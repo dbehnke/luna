@@ -32,9 +32,7 @@
           :class="sidebarPinned ? 'px-3 gap-2 flex-1' : 'w-12 justify-center'"
           title="Home"
         >
-          <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l9-9 9 9M5 10v10h14V10" />
-          </svg>
+          <img :src="lunaMark" alt="Luna" class="w-7 h-7 shrink-0" />
           <span v-if="sidebarPinned" class="font-semibold">Luna</span>
         </router-link>
         <button
