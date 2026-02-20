@@ -36,7 +36,6 @@
           class="max-h-screen max-w-full object-contain"
           loop
           playsinline
-          muted
           @ended="playNext"
           @loadedmetadata="onVideoLoaded"
         ></video>

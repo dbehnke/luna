@@ -143,7 +143,7 @@
               </svg>
             </router-link>
             <button
-              v-if="isOwner"
+              v-if="canManageItem"
               @click="toggleHighlight"
               :class="[
                 'p-2 rounded-lg transition-colors',
@@ -156,7 +156,7 @@
               </svg>
             </button>
             <span
-              v-if="item.is_highlighted && !isOwner"
+              v-if="item.is_highlighted && !canManageItem"
               class="text-yellow-500"
               title="Featured"
             >
@@ -273,7 +273,17 @@
               </div>
             </div>
             <div class="p-2">
-              <p class="text-gray-400 text-xs">{{ formatDuration(clip.duration_ms) }}</p>
+              <div class="flex items-center justify-between gap-2">
+                <p class="text-gray-400 text-xs">{{ formatDuration(clip.duration_ms) }}</p>
+                <button
+                  v-if="canManageItem"
+                  @click="removeClip(clip.clip_id)"
+                  :disabled="deletingClipId === clip.clip_id"
+                  class="text-red-300 hover:text-red-200 disabled:text-gray-500 text-xs"
+                >
+                  {{ deletingClipId === clip.clip_id ? 'Removing...' : 'Remove' }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -306,7 +316,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, deleteClip, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
@@ -328,6 +338,7 @@ let hlsModulePromise = null
 const editing = ref(false)
 const savingEdit = ref(false)
 const reprocessing = ref(false)
+const deletingClipId = ref('')
 const editTitle = ref('')
 const editDescription = ref('')
 
@@ -335,7 +346,7 @@ const isOwner = computed(() => {
   return currentUser.value && item.value && currentUser.value.id === item.value.user_id
 })
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
-const canManageItem = computed(() => isOwner.value || isAdmin.value)
+const canManageItem = computed(() => Boolean(item.value?.can_manage) || isAdmin.value || isOwner.value)
 
 async function toggleFavorite() {
   if (!item.value) return
@@ -351,7 +362,7 @@ async function toggleFavorite() {
 }
 
 async function toggleHighlight() {
-  if (!item.value || !isOwner.value) return
+  if (!item.value || !canManageItem.value) return
   const newState = !item.value.is_highlighted
   item.value.is_highlighted = newState
 
@@ -558,6 +569,20 @@ async function createNewClip() {
     clipError.value = e.message
   } finally {
     clipCreating.value = false
+  }
+}
+
+async function removeClip(clipId) {
+  if (!item.value || !clipId || deletingClipId.value) return
+  deletingClipId.value = clipId
+  clipError.value = ''
+  try {
+    await deleteClip(item.value.id, clipId)
+    clips.value = clips.value.filter(c => c.clip_id !== clipId)
+  } catch (e) {
+    clipError.value = e.message
+  } finally {
+    deletingClipId.value = ''
   }
 }
 

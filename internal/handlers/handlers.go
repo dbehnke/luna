@@ -71,6 +71,7 @@ type MediaItemResponse struct {
 	PersonaAvatarURL *string  `json:"persona_avatar_url,omitempty"`
 	IsFavorited      bool     `json:"is_favorited"`
 	IsHighlighted    bool     `json:"is_highlighted"`
+	CanManage        bool     `json:"can_manage,omitempty"`
 }
 
 type ListItemsResponse struct {
@@ -439,6 +440,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			IsFavorited:   userFavoritedIDs[item.ID],
 			IsHighlighted: item.IsHighlighted,
 		}
+		resp.CanManage = h.canManageItem(user, &item)
 
 		if item.PersonaID != nil {
 			resp.PersonaID = item.PersonaID
@@ -546,6 +548,7 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 		IsFavorited:   isFavorited,
 		IsHighlighted: item.IsHighlighted,
 	}
+	resp.CanManage = h.canManageItem(user, &item)
 
 	if item.PersonaID != nil {
 		resp.PersonaID = item.PersonaID
@@ -646,7 +649,7 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID stri
 		return
 	}
 
-	if item.UserID != user.ID && user.Role != models.RoleAdmin {
+	if !h.canManageItem(user, &item) {
 		http.Error(w, "Forbidden - only owner or admin can delete", http.StatusForbidden)
 		return
 	}
@@ -690,7 +693,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request, itemID stri
 		http.Error(w, "Item not found", http.StatusNotFound)
 		return
 	}
-	if item.UserID != user.ID && user.Role != models.RoleAdmin {
+	if !h.canManageItem(user, &item) {
 		http.Error(w, "Forbidden - only owner or admin can edit", http.StatusForbidden)
 		return
 	}
@@ -757,7 +760,7 @@ func (h *Handler) ReprocessItem(w http.ResponseWriter, r *http.Request, itemID s
 		http.Error(w, "Item not found", http.StatusNotFound)
 		return
 	}
-	if item.UserID != user.ID && user.Role != models.RoleAdmin {
+	if !h.canManageItem(user, &item) {
 		http.Error(w, "Forbidden - only owner or admin can reprocess", http.StatusForbidden)
 		return
 	}
@@ -815,6 +818,10 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 	var item models.MediaItem
 	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
 		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can create clips", http.StatusForbidden)
 		return
 	}
 
@@ -912,6 +919,72 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 		Status: "queued",
 	}); err != nil {
 		logging.Error.Printf("Failed to encode create clip response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) DeleteClip(w http.ResponseWriter, r *http.Request, itemID string, clipID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" || clipID == "" {
+		http.Error(w, "Item ID and clip ID are required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can delete clips", http.StatusForbidden)
+		return
+	}
+
+	var clip models.ClipAsset
+	if err := h.db.Where("id = ? AND item_id = ?", clipID, itemID).First(&clip).Error; err != nil {
+		http.Error(w, "Clip not found", http.StatusNotFound)
+		return
+	}
+
+	// Best-effort cleanup of queued/failed clip jobs for this clip.
+	_ = h.db.Where(
+		"type = ? AND (status = ? OR status = ?) AND payload_json LIKE ? AND payload_json LIKE ?",
+		models.JobTypeClip,
+		models.JobStatusQueued,
+		models.JobStatusFailed,
+		"%\"item_id\":\""+itemID+"\"%",
+		"%\"clip_id\":\""+clipID+"\"%",
+	).Delete(&models.Job{}).Error
+
+	if err := h.db.Delete(&clip).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete clip: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	clipPath := filepath.Join(h.mediaRoot, "items", itemID, "derived", fmt.Sprintf("short_%s.mp4", clipID))
+	_ = os.Remove(clipPath)
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(h.mediaRoot, itemID)
+	if err == nil && assetsMeta != nil {
+		filtered := assetsMeta.Assets[:0]
+		for _, asset := range assetsMeta.Assets {
+			if asset.Kind == "short_clip" && asset.ClipID == clipID {
+				continue
+			}
+			filtered = append(filtered, asset)
+		}
+		assetsMeta.Assets = filtered
+		if writeErr := meta.WriteAssetsMetaAtomic(h.mediaRoot, itemID, assetsMeta); writeErr != nil {
+			logging.Error.Printf("Failed to write assets meta after clip delete for %s/%s: %v", itemID, clipID, writeErr)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "deleted"}); err != nil {
+		logging.Error.Printf("Failed to encode delete clip response for %s/%s: %v", itemID, clipID, err)
 	}
 }
 
@@ -1189,8 +1262,8 @@ func (h *Handler) SetHighlight(w http.ResponseWriter, r *http.Request, itemID st
 		return
 	}
 
-	if item.UserID != user.ID {
-		http.Error(w, "Forbidden - only owner can toggle highlight", http.StatusForbidden)
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can toggle highlight", http.StatusForbidden)
 		return
 	}
 
@@ -1219,6 +1292,28 @@ func (h *Handler) SetHighlight(w http.ResponseWriter, r *http.Request, itemID st
 	}); err != nil {
 		logging.Error.Printf("Failed to encode highlight response for %s: %v", itemID, err)
 	}
+}
+
+func (h *Handler) canManageItem(user *models.User, item *models.MediaItem) bool {
+	if user == nil || item == nil {
+		return false
+	}
+	if user.Role == models.RoleAdmin {
+		return true
+	}
+	if item.UserID == user.ID {
+		return true
+	}
+	if item.PersonaID == nil || *item.PersonaID == "" {
+		return false
+	}
+
+	var persona models.Persona
+	if err := h.db.Select("id", "user_id").First(&persona, "id = ?", *item.PersonaID).Error; err != nil {
+		return false
+	}
+
+	return persona.UserID == user.ID
 }
 
 func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID string) {

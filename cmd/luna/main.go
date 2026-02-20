@@ -300,6 +300,14 @@ func serveCommand(cfg *config.Config) *cli.Command {
 						return
 					}
 
+					if strings.Contains(id, "/clips/") {
+						parts := strings.SplitN(id, "/clips/", 2)
+						if len(parts) == 2 && parts[0] != "" && parts[1] != "" && r.Method == "DELETE" {
+							h.DeleteClip(w, r, parts[0], parts[1])
+							return
+						}
+					}
+
 					if r.Method == "GET" && strings.HasSuffix(id, "/clips") {
 						id = strings.TrimSuffix(id, "/clips")
 						h.GetItemClips(w, r, id)

@@ -142,6 +142,17 @@ export async function getItemClips(itemId) {
   return res.json();
 }
 
+export async function deleteClip(itemId, clipId) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/clips/${clipId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to delete clip");
+  }
+  return res.json();
+}
+
 export async function listShorts(options = {}) {
   const params = new URLSearchParams();
   if (options.limit) params.append("limit", options.limit);
