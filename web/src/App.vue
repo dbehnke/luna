@@ -13,38 +13,73 @@
 
     <aside
       v-if="showGlobalNav"
-      class="hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-20 bg-[#05152a] border-r border-[#123255] flex-col items-center py-4"
+      class="hidden md:flex fixed left-0 top-0 bottom-0 z-40 bg-[#05152a] border-r border-[#123255] flex-col py-4 transition-all duration-200"
+      :class="sidebarPinned ? 'w-56 px-3 items-stretch' : 'w-20 items-center'"
     >
-      <router-link to="/" class="w-12 h-12 rounded-xl bg-[#0a2540] flex items-center justify-center text-white mb-5" title="Home">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l9-9 9 9M5 10v10h14V10" />
-        </svg>
-      </router-link>
+      <div class="w-full flex items-center" :class="sidebarPinned ? 'justify-between gap-2 px-1 mb-3' : 'justify-center mb-4'">
+        <router-link
+          to="/"
+          class="h-12 rounded-xl bg-[#0a2540] text-white flex items-center"
+          :class="sidebarPinned ? 'px-3 gap-2 flex-1' : 'w-12 justify-center'"
+          title="Home"
+        >
+          <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l9-9 9 9M5 10v10h14V10" />
+          </svg>
+          <span v-if="sidebarPinned" class="font-semibold">Luna</span>
+        </router-link>
+        <button
+          class="h-12 rounded-xl bg-[#0a2540] text-gray-200 hover:bg-[#12365d] flex items-center justify-center"
+          :class="sidebarPinned ? 'w-12' : 'hidden'"
+          @click="toggleSidebarPin"
+          title="Collapse sidebar"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <button
+          class="h-12 w-12 rounded-xl bg-[#0a2540] text-gray-200 hover:bg-[#12365d] items-center justify-center"
+          :class="sidebarPinned ? 'hidden' : 'flex'"
+          @click="toggleSidebarPin"
+          title="Expand sidebar"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
 
-      <nav class="flex-1 flex flex-col items-center gap-3">
+      <nav class="flex-1 flex flex-col gap-2 w-full" :class="sidebarPinned ? 'items-stretch' : 'items-center'">
         <router-link
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="w-12 h-12 rounded-xl flex items-center justify-center transition-colors"
-          :class="isRouteActive(item.to) ? 'bg-blue-600 text-white' : 'bg-[#0a2540] text-gray-200 hover:bg-[#12365d]'"
+          class="rounded-xl flex items-center transition-colors"
+          :class="[
+            isRouteActive(item.to) ? 'bg-blue-600 text-white' : 'bg-[#0a2540] text-gray-200 hover:bg-[#12365d]',
+            sidebarPinned ? 'h-11 px-3 gap-3 w-full' : 'w-12 h-12 justify-center'
+          ]"
           :title="item.label"
         >
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.icon" />
           </svg>
+          <span v-if="sidebarPinned" class="text-sm font-medium">{{ item.label }}</span>
         </router-link>
       </nav>
 
       <button
         :disabled="loggingOut"
-        class="w-12 h-12 rounded-xl bg-red-700 text-white hover:bg-red-600 disabled:bg-gray-600 flex items-center justify-center"
+        class="rounded-xl bg-red-700 text-white hover:bg-red-600 disabled:bg-gray-600 flex items-center"
+        :class="sidebarPinned ? 'h-11 px-3 gap-3 justify-start w-full' : 'w-12 h-12 justify-center'"
         @click="handleLogout"
         title="Logout"
       >
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H9m4 8H5a2 2 0 01-2-2V6a2 2 0 012-2h8" />
         </svg>
+        <span v-if="sidebarPinned" class="text-sm font-medium">{{ loggingOut ? "Signing out..." : "Logout" }}</span>
       </button>
     </aside>
 
@@ -96,7 +131,7 @@
       </div>
     </aside>
 
-    <div :class="showGlobalNav ? 'md:pl-20' : ''">
+    <div :class="desktopContentOffsetClass">
       <router-view />
     </div>
   </div>
@@ -113,8 +148,14 @@ const router = useRouter();
 const user = ref(null);
 const loggingOut = ref(false);
 const mobileNavOpen = ref(false);
+const sidebarPinned = ref(true);
+const SIDEBAR_PIN_STORAGE_KEY = "luna_sidebar_pinned";
 
 const showGlobalNav = computed(() => !!user.value && route.name !== "login");
+const desktopContentOffsetClass = computed(() => {
+  if (!showGlobalNav.value) return "";
+  return sidebarPinned.value ? "md:pl-56" : "md:pl-20";
+});
 const navItems = computed(() => {
   const items = [
     { to: "/shorts", label: "Shorts", icon: "M8 5v14l11-7z" },
@@ -146,6 +187,16 @@ async function handleLogout() {
   }
 }
 
+function toggleSidebarPin() {
+  sidebarPinned.value = !sidebarPinned.value;
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(
+      SIDEBAR_PIN_STORAGE_KEY,
+      sidebarPinned.value ? "1" : "0",
+    );
+  }
+}
+
 function isRouteActive(targetPath) {
   if (route.path === targetPath) return true;
   if (targetPath === "/library" && route.path.startsWith("/item/")) return true;
@@ -161,6 +212,12 @@ watch(
 );
 
 onMounted(async () => {
+  if (typeof window !== "undefined") {
+    const persisted = window.localStorage.getItem(SIDEBAR_PIN_STORAGE_KEY);
+    if (persisted === "0") {
+      sidebarPinned.value = false;
+    }
+  }
   await refreshUser();
 });
 </script>
