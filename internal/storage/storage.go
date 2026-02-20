@@ -111,6 +111,22 @@ func AvatarRelativePath(userID uint, personaID string) string {
 	return fmt.Sprintf("avatars/users/%d/personas/%s/avatar.webp", userID, personaID)
 }
 
+// AvatarPathWithExt returns the absolute path for a persona's avatar using the given extension.
+func AvatarPathWithExt(mediaRoot string, userID uint, personaID, ext string) string {
+	if ext == "" {
+		ext = ".webp"
+	}
+	return filepath.Join(AvatarDir(mediaRoot, userID, personaID), "avatar"+ext)
+}
+
+// AvatarRelativePathWithExt returns the relative serving path for a persona's avatar with extension.
+func AvatarRelativePathWithExt(userID uint, personaID, ext string) string {
+	if ext == "" {
+		ext = ".webp"
+	}
+	return fmt.Sprintf("avatars/users/%d/personas/%s/avatar%s", userID, personaID, ext)
+}
+
 // EnsureAvatarDir creates the directory structure for a persona's avatar
 func EnsureAvatarDir(mediaRoot string, userID uint, personaID string) error {
 	dir := AvatarDir(mediaRoot, userID, personaID)

@@ -1930,6 +1930,9 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 		http.Error(w, "Invalid file type: must be jpeg, png, or webp", http.StatusBadRequest)
 		return
 	}
+	if ext == ".jpeg" {
+		ext = ".jpg"
+	}
 
 	if header.Size > 5*1024*1024 {
 		http.Error(w, "File too large: maximum 5MB", http.StatusBadRequest)
@@ -1965,7 +1968,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 		return
 	}
 
-	avatarPath := storage.AvatarPath(h.mediaRoot, user.ID, personaID)
+	avatarPath := storage.AvatarPathWithExt(h.mediaRoot, user.ID, personaID, ext)
 
 	if err := os.Rename(tmpPath, avatarPath); err != nil {
 		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
@@ -1975,7 +1978,21 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 		return
 	}
 
-	relPath := storage.AvatarRelativePath(user.ID, personaID)
+	// Keep only one active avatar file to make updates deterministic.
+	avatarDir := storage.AvatarDir(h.mediaRoot, user.ID, personaID)
+	oldAvatarCandidates, globErr := filepath.Glob(filepath.Join(avatarDir, "avatar.*"))
+	if globErr == nil {
+		for _, candidate := range oldAvatarCandidates {
+			if candidate == avatarPath {
+				continue
+			}
+			if removeErr := os.Remove(candidate); removeErr != nil && !os.IsNotExist(removeErr) {
+				logging.Error.Printf("Failed to remove old avatar %s: %v", candidate, removeErr)
+			}
+		}
+	}
+
+	relPath := storage.AvatarRelativePathWithExt(user.ID, personaID, ext)
 	persona.AvatarPath = relPath
 	persona.UpdatedAt = time.Now()
 

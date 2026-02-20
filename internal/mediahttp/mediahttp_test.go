@@ -165,3 +165,34 @@ func TestMediaHandler_SupportsHEAD(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
+
+func TestMediaHandler_ServesAvatarPaths(t *testing.T) {
+	mediaRoot := t.TempDir()
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
+
+	avatarPath := filepath.Join(mediaRoot, "avatars", "users", "1", "personas", "abc", "avatar.jpg")
+	if err := os.MkdirAll(filepath.Dir(avatarPath), 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	testContent := []byte("avatar bytes")
+	if err := os.WriteFile(avatarPath, testContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	handler := New(mediaRoot)
+
+	// Path style used by ServeMux with http.StripPrefix("/media/", ...)
+	req := httptest.NewRequest(http.MethodGet, "/avatars/users/1/personas/abc/avatar.jpg", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body, _ := io.ReadAll(w.Body)
+	if string(body) != string(testContent) {
+		t.Fatal("avatar content mismatch")
+	}
+}
