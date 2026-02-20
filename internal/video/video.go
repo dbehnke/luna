@@ -364,7 +364,7 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 		timestamp := duration * pct
 		outputPath := filepath.Join(thumbsDir, fmt.Sprintf("t_%04d.webp", i+1))
 
-		tmpOutput := outputPath + ".tmp"
+		tmpOutput := outputPath + ".tmp.webp"
 		defer func() { _ = os.Remove(tmpOutput) }()
 
 		cmd := exec.Command("ffmpeg",
@@ -373,6 +373,8 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 			"-i", originalFile,
 			"-vframes", "1",
 			"-vf", "scale=480:-2",
+			"-f", "webp",
+			"-c:v", "libwebp",
 			"-lossless", "1",
 			tmpOutput,
 		)
@@ -674,7 +676,7 @@ func (p *Processor) ProcessPhoto(itemID string) error {
 	thumbPath := filepath.Join(photosDir, "thumb.webp")
 
 	writeResized := func(outputPath string, size int) error {
-		tmpOutput := outputPath + ".tmp"
+		tmpOutput := outputPath + ".tmp.webp"
 		defer func() { _ = os.Remove(tmpOutput) }()
 
 		cmd := exec.Command("ffmpeg",
@@ -682,6 +684,8 @@ func (p *Processor) ProcessPhoto(itemID string) error {
 			"-i", originalFile,
 			"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", size, size),
 			"-vframes", "1",
+			"-f", "webp",
+			"-c:v", "libwebp",
 			tmpOutput,
 		)
 
