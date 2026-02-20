@@ -344,4 +344,59 @@ Priorities:
   - job claim locking + stale lock recovery
 - Never hard-delete media files in MVP; always soft delete + trash.
 
+---
+
+## 14) Current Repo Reality (Audit Snapshot)
+This section reflects current implementation status in this repository and should be treated as source of truth for near-term execution.
+
+### Implemented
+- Single binary + subcommands: `luna serve`, `luna worker`, `luna import`, `luna rebuild-db`, `luna user ...`, `luna doctor`, `luna reconcile`, `luna snapshot`, `luna restore`, `luna report-storage`.
+- Auth: cookie + server session persisted in SQLite.
+- Roles: `admin` and `user`, with activation/deactivation flows.
+- Personas: CRUD, avatar upload, profile routes, and upload persona selection.
+- Upload pipeline: video/photo/audio upload + background jobs.
+- Video jobs: probe, transcode MP4, thumbs, short clip generation.
+- Photo jobs: display/thumb generation.
+- Sidecar metadata writing + DB rebuild from sidecars.
+- Frontend routes implemented: `/login`, `/`, `/shorts`, `/library`, `/upload`, `/item/:id`, `/@:slug`, `/me/profile`, `/admin/users`.
+- Embedded frontend workflow exists (`go:embed` from `cmd/luna/frontend`) with Taskfile helpers.
+
+### Implemented Beyond Original MVP Scope
+- Audio item type (`audio`) with transcode to `master.m4a`.
+- HLS generation path and playback fallback support for videos.
+
+### Not Yet Implemented (High Confidence Gaps)
+- Playlists end-to-end: DB tables, API, and frontend routes/UI.
+- Trash view + admin purge workflow for soft-deleted items.
+- Per-item/admin purge command (current purge is user-centric and destructive).
+- Import Level 2 (MediaCMS Postgres metadata mapping).
+- Preview MP4 artifact generation.
+- Explicit queue integration tests for claim locking + stale lock recovery.
+
+### Doc/Plan Drift To Reconcile
+- Plan says storage root is locked to `/data/media`; runtime defaults currently to `~/.luna` unless `MEDIA_ROOT` is set.
+- Plan says route `/watch/:id`; current route is `/item/:id`.
+- Plan references `app import mediacms`; current command is `luna import --src ...`.
+- Plan lists `video_sources`, `video_assets`, `photo_assets`, `playlists`, `playlist_items`; current schema uses `media_items`, `clip_assets`, sidecar asset metadata, and no playlist tables yet.
+
+---
+
+## 15) Next Execution Batches (Subagent-Friendly)
+1) **Data Model/Backend Batch**
+- Add `playlists` + `playlist_items` models, migrations, and APIs (CRUD + reorder + membership).
+- Add media-item soft-delete listing endpoints (`trash`) and admin purge endpoint/CLI for item-level hard delete.
+- Add queue integration tests for locking + stale lock requeue.
+
+2) **Frontend Batch**
+- Add `/playlists` page and playlist controls on item/short cards.
+- Add Trash management UI (owner view + admin-only purge actions).
+- Keep `/item/:id` canonical and optionally alias `/watch/:id` for compatibility.
+
+3) **Ops/Import Batch**
+- Implement MediaCMS Postgres metadata import mode.
+- Add preview MP4 generation job + UI usage if needed.
+- Decide and document default deployment mode:
+  - force `/data/media` in production, or
+  - keep `~/.luna` local default and document required env override.
+
 END.
