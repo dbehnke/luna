@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -1173,19 +1174,35 @@ func workerCommand(cfg *config.Config) *cli.Command {
 				runLoop = false
 			}()
 
-			pollInterval := 2 * time.Second
+			const (
+				minIdleBackoff = 1 * time.Second
+				maxIdleBackoff = 30 * time.Second
+			)
+			idleBackoff := time.Duration(0)
 
 			for runLoop {
 				job, err := jobQueue.Claim(workerID, cfg.VideoTranscodeConcurrency, jobTypes)
 				if err != nil {
-					if err.Error() == "record not found" {
-						time.Sleep(pollInterval)
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						if idleBackoff == 0 {
+							idleBackoff = minIdleBackoff
+						} else if idleBackoff < maxIdleBackoff {
+							idleBackoff += minIdleBackoff
+							if idleBackoff > maxIdleBackoff {
+								idleBackoff = maxIdleBackoff
+							}
+						}
+						time.Sleep(idleBackoff)
 						continue
 					}
 					logging.Error.Printf("Failed to claim job: %v", err)
-					time.Sleep(pollInterval)
+					if idleBackoff == 0 {
+						idleBackoff = minIdleBackoff
+					}
+					time.Sleep(idleBackoff)
 					continue
 				}
+				idleBackoff = 0
 
 				logging.Info.Printf("Processing job %d (type=%s, item=%s)", job.ID, job.Type, extractItemID(job.PayloadJSON))
 
@@ -1249,6 +1266,7 @@ func workerCommand(cfg *config.Config) *cli.Command {
 						}
 					}
 				}
+				idleBackoff = 0
 			}
 
 			logging.Info.Println("Worker shutdown complete")
