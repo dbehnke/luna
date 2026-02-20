@@ -77,9 +77,43 @@
 
         <div class="p-6">
           <div class="flex items-center gap-3 mb-2">
-            <h1 class="text-2xl font-bold text-white">
+            <h1 class="text-2xl font-bold text-white flex-1">
               {{ item.title || 'Untitled' }}
             </h1>
+            <button
+              @click="toggleFavorite"
+              :class="[
+                'p-2 rounded-lg transition-colors',
+                item.is_favorited ? 'text-red-500' : 'text-gray-500 hover:text-red-400'
+              ]"
+              title="Toggle favorite"
+            >
+              <svg class="w-6 h-6" :fill="item.is_favorited ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+              </svg>
+            </button>
+            <button
+              v-if="isOwner"
+              @click="toggleHighlight"
+              :class="[
+                'p-2 rounded-lg transition-colors',
+                item.is_highlighted ? 'text-yellow-500' : 'text-gray-500 hover:text-yellow-400'
+              ]"
+              :title="item.is_highlighted ? 'Remove from featured' : 'Add to featured'"
+            >
+              <svg class="w-6 h-6" :fill="item.is_highlighted ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+              </svg>
+            </button>
+            <span
+              v-if="item.is_highlighted && !isOwner"
+              class="text-yellow-500"
+              title="Featured"
+            >
+              <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+            </span>
             <span
               v-if="(item.type === 'video' || item.type === 'audio') && item.processing_status"
               :class="[
@@ -220,16 +254,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
-import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
 
 const item = ref(null)
+const currentUser = ref(null)
 const loading = ref(true)
 const error = ref('')
 const showDeleteConfirm = ref(false)
@@ -240,6 +275,36 @@ const clipCreating = ref(false)
 const clipError = ref('')
 const videoElement = ref(null)
 const hlsPlayer = ref(null)
+
+const isOwner = computed(() => {
+  return currentUser.value && item.value && currentUser.value.id === item.value.user_id
+})
+
+async function toggleFavorite() {
+  if (!item.value) return
+  const newState = !item.value.is_favorited
+  item.value.is_favorited = newState
+  
+  try {
+    await setFavorite(item.value.id, newState)
+  } catch (e) {
+    item.value.is_favorited = !newState
+    console.error('Failed to toggle favorite:', e)
+  }
+}
+
+async function toggleHighlight() {
+  if (!item.value || !isOwner.value) return
+  const newState = !item.value.is_highlighted
+  item.value.is_highlighted = newState
+  
+  try {
+    await setHighlight(item.value.id, newState)
+  } catch (e) {
+    item.value.is_highlighted = !newState
+    console.error('Failed to toggle highlight:', e)
+  }
+}
 
 function initHLS() {
   if (!videoElement.value || !item.value?.hls_url) {
@@ -302,6 +367,7 @@ async function loadItem() {
   error.value = ''
   
   try {
+    currentUser.value = await getCurrentUser()
     item.value = await getItem(route.params.id)
     if (item.value.type === 'video') {
       await loadClips()

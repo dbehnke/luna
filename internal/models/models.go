@@ -89,7 +89,7 @@ type MediaItem struct {
 	Type           string         `gorm:"size:50;not null;index" json:"type"` // video or photo
 	Title          string         `gorm:"size:500;not null" json:"title"`
 	Description    string         `gorm:"type:text" json:"description"`
-	IsHighlighted  bool           `gorm:"default:false" json:"is_highlighted"`
+	IsHighlighted  bool           `gorm:"default:false;index" json:"is_highlighted"`
 	HLSStatus      string         `gorm:"size:50;default:pending" json:"hls_status"`
 	HLSDerivedPath string         `gorm:"size:512" json:"hls_derived_path"`
 	CreatedAt      time.Time      `gorm:"index" json:"created_at"`
@@ -140,6 +140,13 @@ type Reaction struct {
 	Value     int       `gorm:"not null" json:"value"` // -1 (down), 0 (none), 1 (up)
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Favorite struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"uniqueIndex:idx_favorite_user_item;not null" json:"user_id"`
+	ItemID    string    `gorm:"uniqueIndex:idx_favorite_user_item;index;not null" json:"item_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SchemaVersion stores the current schema version for migrations

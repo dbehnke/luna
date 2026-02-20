@@ -62,8 +62,13 @@ export async function uploadFile(itemId, file) {
 
 export async function listItems(options = {}) {
   const params = new URLSearchParams()
+  if (options.q) params.append('q', options.q)
   if (options.type) params.append('type', options.type)
+  if (options.persona_id) params.append('persona_id', options.persona_id)
   if (options.user === 'me') params.append('user', 'me')
+  if (options.favorites) params.append('favorites', '1')
+  if (options.highlighted) params.append('highlighted', '1')
+  if (options.sort) params.append('sort', options.sort)
   if (options.limit) params.append('limit', options.limit)
   if (options.cursor) params.append('cursor', options.cursor)
   
@@ -122,6 +127,26 @@ export async function setReaction(itemId, value) {
   return res.json()
 }
 
+export async function setFavorite(itemId, enabled) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/favorite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  })
+  if (!res.ok) throw new Error('Failed to set favorite')
+  return res.json()
+}
+
+export async function setHighlight(itemId, enabled) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/highlight`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  })
+  if (!res.ok) throw new Error('Failed to set highlight')
+  return res.json()
+}
+
 export async function getPersonas() {
   const res = await fetch(`${API_BASE}/api/personas`)
   if (!res.ok) throw new Error('Failed to get personas')
@@ -159,6 +184,9 @@ export async function getProfile(slug) {
 export async function getProfileItems(slug, options = {}) {
   const params = new URLSearchParams()
   if (options.type) params.append('type', options.type)
+  if (options.q) params.append('q', options.q)
+  if (options.highlighted) params.append('highlighted', '1')
+  if (options.sort) params.append('sort', options.sort)
   if (options.limit) params.append('limit', options.limit)
   if (options.cursor) params.append('cursor', options.cursor)
   
@@ -174,5 +202,11 @@ export async function getProfileShorts(slug, options = {}) {
   
   const res = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(slug)}/shorts?${params}`)
   if (!res.ok) throw new Error('Failed to get profile shorts')
+  return res.json()
+}
+
+export async function getCurrentUser() {
+  const res = await fetch(`${API_BASE}/api/me`)
+  if (!res.ok) return null
   return res.json()
 }

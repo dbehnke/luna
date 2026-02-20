@@ -47,6 +47,7 @@ type CreateItemResponse struct {
 
 type MediaItemResponse struct {
 	ID               string   `json:"id"`
+	UserID           uint     `json:"user_id"`
 	Type             string   `json:"type"`
 	Title            string   `json:"title"`
 	Description      string   `json:"description"`
@@ -62,6 +63,8 @@ type MediaItemResponse struct {
 	PersonaName      *string  `json:"persona_name,omitempty"`
 	PersonaSlug      *string  `json:"persona_slug,omitempty"`
 	PersonaAvatarURL *string  `json:"persona_avatar_url,omitempty"`
+	IsFavorited      bool     `json:"is_favorited"`
+	IsHighlighted    bool     `json:"is_highlighted"`
 }
 
 type ListItemsResponse struct {
@@ -276,28 +279,64 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	query := h.db.Where("deleted_at IS NULL")
 
+	user := auth.GetUser(r.Context())
+
+	searchQuery := r.URL.Query().Get("q")
+	if searchQuery != "" {
+		query = query.Where("title ILIKE ?", "%"+searchQuery+"%")
+	}
+
 	itemType := r.URL.Query().Get("type")
 	if itemType != "" {
 		query = query.Where("type = ?", itemType)
 	}
 
-	userParam := r.URL.Query().Get("user")
-	if userParam == "me" {
-		user := auth.GetUser(r.Context())
-		if user != nil {
-			query = query.Where("user_id = ?", user.ID)
+	personaID := r.URL.Query().Get("persona_id")
+	if personaID != "" {
+		query = query.Where("persona_id = ?", personaID)
+	}
+
+	highlighted := r.URL.Query().Get("highlighted")
+	if highlighted == "1" {
+		query = query.Where("is_highlighted = ?", true)
+	}
+
+	favoritesOnly := r.URL.Query().Get("favorites")
+	if favoritesOnly == "1" && user != nil {
+		var favoriteItemIDs []string
+		h.db.Model(&models.Favorite{}).Where("user_id = ?", user.ID).Pluck("item_id", &favoriteItemIDs)
+		if len(favoriteItemIDs) > 0 {
+			query = query.Where("id IN ?", favoriteItemIDs)
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ListItemsResponse{
+				Items:   []MediaItemResponse{},
+				HasMore: false,
+			})
+			return
 		}
 	}
 
-	limit := 20
+	userParam := r.URL.Query().Get("user")
+	if userParam == "me" && user != nil {
+		query = query.Where("user_id = ?", user.ID)
+	}
+
+	limit := 24
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 50 {
 			limit = parsed
 		}
 	}
 
+	sortOrder := "created_at DESC"
+	sortParam := r.URL.Query().Get("sort")
+	if sortParam == "old" {
+		sortOrder = "created_at ASC"
+	}
+
 	var items []models.MediaItem
-	query = query.Preload("Persona").Order("created_at DESC").Limit(limit + 1)
+	query = query.Preload("Persona").Order(sortOrder).Limit(limit + 1)
 	if err := query.Find(&items).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list items: %v", err), http.StatusInternalServerError)
 		return
@@ -308,14 +347,32 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 		items = items[:limit]
 	}
 
+	userFavoritedIDs := map[string]bool{}
+	if user != nil {
+		if len(items) > 0 {
+			var itemIDs []string
+			for _, item := range items {
+				itemIDs = append(itemIDs, item.ID)
+			}
+			var favorites []models.Favorite
+			h.db.Where("user_id = ? AND item_id IN ?", user.ID, itemIDs).Find(&favorites)
+			for _, f := range favorites {
+				userFavoritedIDs[f.ItemID] = true
+			}
+		}
+	}
+
 	responses := make([]MediaItemResponse, len(items))
 	for i, item := range items {
 		resp := MediaItemResponse{
-			ID:          item.ID,
-			Type:        item.Type,
-			Title:       item.Title,
-			Description: item.Description,
-			CreatedAt:   item.CreatedAt.Format(time.RFC3339),
+			ID:            item.ID,
+			UserID:        item.UserID,
+			Type:          item.Type,
+			Title:         item.Title,
+			Description:   item.Description,
+			CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+			IsFavorited:   userFavoritedIDs[item.ID],
+			IsHighlighted: item.IsHighlighted,
 		}
 
 		if item.PersonaID != nil {
@@ -391,15 +448,27 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 		return
 	}
 
+	user := auth.GetUser(r.Context())
+	isFavorited := false
+	if user != nil {
+		var favorite models.Favorite
+		if err := h.db.Where("user_id = ? AND item_id = ?", user.ID, itemID).First(&favorite).Error; err == nil {
+			isFavorited = true
+		}
+	}
+
 	itemMeta, _ := meta.ReadItemMetaByID(h.mediaRoot, itemID)
 	assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, itemID)
 
 	resp := MediaItemResponse{
-		ID:          item.ID,
-		Type:        item.Type,
-		Title:       item.Title,
-		Description: item.Description,
-		CreatedAt:   item.CreatedAt.Format(time.RFC3339),
+		ID:            item.ID,
+		UserID:        item.UserID,
+		Type:          item.Type,
+		Title:         item.Title,
+		Description:   item.Description,
+		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+		IsFavorited:   isFavorited,
+		IsHighlighted: item.IsHighlighted,
 	}
 
 	if item.PersonaID != nil {
@@ -833,6 +902,105 @@ func (h *Handler) SetReaction(w http.ResponseWriter, r *http.Request, itemID str
 	})
 }
 
+type SetFavoriteRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (h *Handler) SetFavorite(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+
+	var req SetFavoriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Enabled {
+		favorite := models.Favorite{
+			UserID:    user.ID,
+			ItemID:    itemID,
+			CreatedAt: time.Now(),
+		}
+		h.db.Where("user_id = ? AND item_id = ?", user.ID, itemID).Delete(&models.Favorite{})
+		if err := h.db.Create(&favorite).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to favorite item: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		h.db.Where("user_id = ? AND item_id = ?", user.ID, itemID).Delete(&models.Favorite{})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{
+		"is_favorited": req.Enabled,
+	})
+}
+
+type SetHighlightRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (h *Handler) SetHighlight(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+
+	if item.UserID != user.ID {
+		http.Error(w, "Forbidden - only owner can toggle highlight", http.StatusForbidden)
+		return
+	}
+
+	var req SetHighlightRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.Model(&item).Update("is_highlighted", req.Enabled).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update highlight: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	itemMeta, err := meta.ReadItemMetaByID(h.mediaRoot, itemID)
+	if err == nil {
+		itemMeta.State.Highlighted = req.Enabled
+		meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{
+		"is_highlighted": req.Enabled,
+	})
+}
+
 func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID string) {
 	if itemID == "" {
 		http.Error(w, "Item ID required", http.StatusBadRequest)
@@ -875,6 +1043,27 @@ func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID st
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"clips": responses,
+	})
+}
+
+type CurrentUserResponse struct {
+	ID       uint   `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(CurrentUserResponse{
+		ID:       user.ID,
+		Username: user.Username,
+		Role:     user.Role,
 	})
 }
 
@@ -1276,12 +1465,14 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 }
 
 type ProfileItemResponse struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	CreatedAt string `json:"created_at"`
-	ThumbURL  string `json:"thumb_url,omitempty"`
-	MasterURL string `json:"master_url,omitempty"`
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	Title         string `json:"title"`
+	CreatedAt     string `json:"created_at"`
+	ThumbURL      string `json:"thumb_url,omitempty"`
+	MasterURL     string `json:"master_url,omitempty"`
+	IsFavorited   bool   `json:"is_favorited"`
+	IsHighlighted bool   `json:"is_highlighted"`
 }
 
 type ProfileItemsResponse struct {
@@ -1302,6 +1493,8 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 		return
 	}
 
+	user := auth.GetUser(r.Context())
+
 	itemType := r.URL.Query().Get("type")
 
 	limit := 24
@@ -1311,9 +1504,25 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 		}
 	}
 
+	sortOrder := "created_at DESC"
+	sortParam := r.URL.Query().Get("sort")
+	if sortParam == "old" {
+		sortOrder = "created_at ASC"
+	}
+
 	query := h.db.Model(&models.MediaItem{}).Where("persona_id = ? AND deleted_at IS NULL", persona.ID)
 	if itemType != "" {
 		query = query.Where("type = ?", itemType)
+	}
+
+	searchQuery := r.URL.Query().Get("q")
+	if searchQuery != "" {
+		query = query.Where("title ILIKE ?", "%"+searchQuery+"%")
+	}
+
+	highlighted := r.URL.Query().Get("highlighted")
+	if highlighted == "1" {
+		query = query.Where("is_highlighted = ?", true)
 	}
 
 	cursor := r.URL.Query().Get("cursor")
@@ -1326,7 +1535,7 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 	}
 
 	var items []models.MediaItem
-	query = query.Order("created_at DESC").Limit(limit + 1)
+	query = query.Order(sortOrder).Limit(limit + 1)
 	if err := query.Find(&items).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list items: %v", err), http.StatusInternalServerError)
 		return
@@ -1337,13 +1546,30 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 		items = items[:limit]
 	}
 
+	userFavoritedIDs := map[string]bool{}
+	if user != nil {
+		if len(items) > 0 {
+			var itemIDs []string
+			for _, item := range items {
+				itemIDs = append(itemIDs, item.ID)
+			}
+			var favorites []models.Favorite
+			h.db.Where("user_id = ? AND item_id IN ?", user.ID, itemIDs).Find(&favorites)
+			for _, f := range favorites {
+				userFavoritedIDs[f.ItemID] = true
+			}
+		}
+	}
+
 	responses := make([]ProfileItemResponse, len(items))
 	for i, item := range items {
 		resp := ProfileItemResponse{
-			ID:        item.ID,
-			Type:      item.Type,
-			Title:     item.Title,
-			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+			ID:            item.ID,
+			Type:          item.Type,
+			Title:         item.Title,
+			CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+			IsFavorited:   userFavoritedIDs[item.ID],
+			IsHighlighted: item.IsHighlighted,
 		}
 
 		if item.Type == models.MediaTypeVideo {

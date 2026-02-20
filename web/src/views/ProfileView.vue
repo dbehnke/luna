@@ -66,6 +66,30 @@
         </div>
         
         <div v-if="activeTab === 'videos'">
+          <div class="flex flex-wrap gap-2 mb-4">
+            <div class="relative flex-1 min-w-[200px]">
+              <input
+                v-model="searchQuery"
+                type="text"
+                placeholder="Search videos..."
+                class="w-full bg-[#162a4a] text-white px-3 py-2 rounded-lg pl-9 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                @input="onSearchInput"
+              />
+              <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+            </div>
+            
+            <select
+              v-model="sortOrder"
+              class="bg-[#162a4a] text-white px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+              @change="loadVideos()"
+            >
+              <option value="new">Newest First</option>
+              <option value="old">Oldest First</option>
+            </select>
+          </div>
+          
           <div v-if="videosLoading" class="text-center text-gray-400 py-8">
             Loading videos...
           </div>
@@ -177,6 +201,11 @@ const loading = ref(true)
 const error = ref('')
 const activeTab = ref('videos')
 
+const searchQuery = ref('')
+const sortOrder = ref('new')
+
+let searchDebounceTimer = null
+
 const videos = ref([])
 const videosLoading = ref(false)
 const videosHasMore = ref(false)
@@ -215,11 +244,15 @@ async function loadVideos(append = false) {
   }
   
   try {
-    const result = await getProfileItems(slug.value, {
+    const options = {
       type: 'video',
       limit: 24,
-      cursor: append ? videosCursor.value : undefined
-    })
+      sort: sortOrder.value
+    }
+    if (searchQuery.value) options.q = searchQuery.value
+    if (append && videosCursor.value) options.cursor = videosCursor.value
+    
+    const result = await getProfileItems(slug.value, options)
     
     if (append) {
       videos.value = [...videos.value, ...result.items]
@@ -234,6 +267,14 @@ async function loadVideos(append = false) {
   } finally {
     videosLoading.value = false
   }
+}
+
+function onSearchInput() {
+  clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    videosCursor.value = ''
+    loadVideos()
+  }, 300)
 }
 
 async function loadShorts(append = false) {
@@ -299,7 +340,9 @@ watch(activeTab, async (tab) => {
 watch(slug, async () => {
   await loadProfile()
   videos.value = []
-  shorts.value = await loadProfile()
+  shorts.value = []
+  searchQuery.value = ''
+  sortOrder.value = 'new'
   activeTab.value = 'videos'
 })
 
