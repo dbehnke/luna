@@ -156,7 +156,7 @@
 
       <div v-if="item.type === 'video' && item.processing_status === 'ready'" class="mt-6 bg-[#0a2540] rounded-lg p-6">
         <h2 class="text-xl font-bold text-white mb-4">Create Short</h2>
-        
+
         <div class="flex gap-4 mb-4">
           <div class="flex-1">
             <label class="block text-gray-400 text-sm mb-1">Start (seconds)</label>
@@ -178,9 +178,9 @@
             />
           </div>
         </div>
-        
+
         <p v-if="clipError" class="text-red-400 text-sm mb-4">{{ clipError }}</p>
-        
+
         <div class="flex gap-4">
           <button
             @click="createNewClip"
@@ -201,7 +201,7 @@
 
       <div v-if="clips.length > 0" class="mt-6 bg-[#0a2540] rounded-lg p-6">
         <h2 class="text-xl font-bold text-white mb-4">Shorts from this video</h2>
-        
+
         <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div
             v-for="clip in clips"
@@ -256,7 +256,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Hls from 'hls.js'
 import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
@@ -275,6 +274,7 @@ const clipCreating = ref(false)
 const clipError = ref('')
 const videoElement = ref(null)
 const hlsPlayer = ref(null)
+let hlsModulePromise = null
 
 const isOwner = computed(() => {
   return currentUser.value && item.value && currentUser.value.id === item.value.user_id
@@ -284,7 +284,7 @@ async function toggleFavorite() {
   if (!item.value) return
   const newState = !item.value.is_favorited
   item.value.is_favorited = newState
-  
+
   try {
     await setFavorite(item.value.id, newState)
   } catch (e) {
@@ -297,7 +297,7 @@ async function toggleHighlight() {
   if (!item.value || !isOwner.value) return
   const newState = !item.value.is_highlighted
   item.value.is_highlighted = newState
-  
+
   try {
     await setHighlight(item.value.id, newState)
   } catch (e) {
@@ -306,10 +306,19 @@ async function toggleHighlight() {
   }
 }
 
-function initHLS() {
+async function getHlsModule() {
+  if (!hlsModulePromise) {
+    hlsModulePromise = import('hls.js/dist/hls.light.mjs')
+  }
+  return hlsModulePromise
+}
+
+async function initHLS() {
   if (!videoElement.value || !item.value?.hls_url) {
     return
   }
+
+  const { default: Hls } = await getHlsModule()
 
   if (Hls.isSupported()) {
     if (hlsPlayer.value) {
@@ -351,7 +360,7 @@ function initHLS() {
 }
 
 watch(() => item.value?.hls_url, () => {
-  initHLS()
+  void initHLS()
 })
 
 onMounted(loadItem)
@@ -365,7 +374,7 @@ onUnmounted(() => {
 async function loadItem() {
   loading.value = true
   error.value = ''
-  
+
   try {
     currentUser.value = await getCurrentUser()
     item.value = await getItem(route.params.id)
@@ -416,22 +425,22 @@ async function doDelete() {
 
 async function createNewClip() {
   clipError.value = ''
-  
+
   const startMs = Math.floor(clipStart.value * 1000)
   const endMs = Math.floor(clipEnd.value * 1000)
-  
+
   if (endMs - startMs > 90000) {
     clipError.value = 'Clip cannot exceed 90 seconds'
     return
   }
-  
+
   if (endMs <= startMs) {
     clipError.value = 'End time must be greater than start time'
     return
   }
-  
+
   clipCreating.value = true
-  
+
   try {
     await createClip(route.params.id, startMs, endMs)
     clipStart.value = 0

@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 tasks:
   # Build frontend with Vite
@@ -20,19 +20,19 @@ tasks:
   # Build Go binary with embedded frontend
   build-backend:
     desc: Build Go backend with embedded frontend
+    deps: [build-frontend, prepare-embed]
     cmds:
       - go build -o luna -ldflags="-s -w" ./cmd/luna
 
   # Full build: frontend + backend with embed
   build:
     desc: Build frontend and embed into Go binary
-    deps: [build-frontend, prepare-embed]
-    cmds:
-      - go build -o luna -ldflags="-s -w" ./cmd/luna
+    deps: [build-backend]
 
-  # Development build (faster, no embed)
+  # Development build (still uses embedded frontend assets)
   dev:
-    desc: Build without embedding frontend
+    desc: Build debug backend binary with embedded frontend
+    deps: [build-frontend, prepare-embed]
     cmds:
       - go build -o luna ./cmd/luna
 

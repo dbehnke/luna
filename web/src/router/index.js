@@ -1,12 +1,4 @@
 import { createRouter, createWebHistory } from "vue-router";
-import LandingView from "../views/LandingView.vue";
-import UploadView from "../views/UploadView.vue";
-import LibraryView from "../views/LibraryView.vue";
-import ItemView from "../views/ItemView.vue";
-import ShortsView from "../views/ShortsView.vue";
-import PersonasView from "../views/PersonasView.vue";
-import ProfileView from "../views/ProfileView.vue";
-import LoginView from "../views/LoginView.vue";
 import { getCurrentUser } from "../services/api";
 
 const router = createRouter({
@@ -15,42 +7,42 @@ const router = createRouter({
     {
       path: "/login",
       name: "login",
-      component: LoginView,
+      component: () => import("../views/LoginView.vue"),
     },
     {
       path: "/",
       name: "home",
-      component: LandingView,
+      component: () => import("../views/LandingView.vue"),
     },
     {
       path: "/upload",
       name: "upload",
-      component: UploadView,
+      component: () => import("../views/UploadView.vue"),
     },
     {
       path: "/library",
       name: "library",
-      component: LibraryView,
+      component: () => import("../views/LibraryView.vue"),
     },
     {
       path: "/item/:id",
       name: "item",
-      component: ItemView,
+      component: () => import("../views/ItemView.vue"),
     },
     {
       path: "/shorts",
       name: "shorts",
-      component: ShortsView,
+      component: () => import("../views/ShortsView.vue"),
     },
     {
       path: "/personas",
       name: "personas",
-      component: PersonasView,
+      component: () => import("../views/PersonasView.vue"),
     },
     {
       path: "/@:slug",
       name: "profile",
-      component: ProfileView,
+      component: () => import("../views/ProfileView.vue"),
     },
   ],
 });
