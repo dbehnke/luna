@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -484,7 +485,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if len(assetsMeta.Thumbnails) > 0 {
-					resp.ThumbURLs = []string{"/media/" + item.ID + "/" + assetsMeta.Thumbnails[0].StoragePath}
+					resp.ThumbURLs = []string{thumbnailURL(item.ID, assetsMeta.Thumbnails[0])}
 				}
 			}
 		}
@@ -597,7 +598,7 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 			}
 
 			for _, thumb := range assetsMeta.Thumbnails {
-				resp.ThumbURLs = append(resp.ThumbURLs, "/media/"+item.ID+"/"+thumb.StoragePath)
+				resp.ThumbURLs = append(resp.ThumbURLs, thumbnailURL(item.ID, thumb))
 			}
 		}
 	}
@@ -1144,7 +1145,7 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 		thumbURL := ""
 		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, clip.ItemID)
 		if assetsMeta != nil && len(assetsMeta.Thumbnails) > 0 {
-			thumbURL = "/media/" + clip.ItemID + "/" + assetsMeta.Thumbnails[0].StoragePath
+			thumbURL = thumbnailURL(clip.ItemID, assetsMeta.Thumbnails[0])
 		}
 
 		var upCount, downCount int64
@@ -2129,6 +2130,15 @@ func avatarURL(avatarPath string) string {
 	return "/media/" + avatarPath
 }
 
+func thumbnailURL(itemID string, thumb meta.Thumbnail) string {
+	base := "/media/" + itemID + "/" + thumb.StoragePath
+	version := strings.TrimSpace(thumb.Timestamp)
+	if version == "" {
+		return base
+	}
+	return base + "?v=" + url.QueryEscape(version)
+}
+
 // normalizeSlug converts a string to a URL-friendly slug
 func normalizeSlug(s string) string {
 	// Convert to lowercase
@@ -2468,7 +2478,7 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 					}
 				}
 				if len(assetsMeta.Thumbnails) > 0 {
-					resp.ThumbURL = "/media/" + item.ID + "/" + assetsMeta.Thumbnails[0].StoragePath
+					resp.ThumbURL = thumbnailURL(item.ID, assetsMeta.Thumbnails[0])
 				}
 			}
 		}
@@ -2568,7 +2578,7 @@ func (h *Handler) GetProfileShorts(w http.ResponseWriter, r *http.Request, slug 
 		thumbURL := ""
 		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, clip.ItemID)
 		if assetsMeta != nil && len(assetsMeta.Thumbnails) > 0 {
-			thumbURL = "/media/" + clip.ItemID + "/" + assetsMeta.Thumbnails[0].StoragePath
+			thumbURL = thumbnailURL(clip.ItemID, assetsMeta.Thumbnails[0])
 		}
 
 		videoURL := ""

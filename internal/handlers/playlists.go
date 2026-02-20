@@ -526,7 +526,7 @@ func (h *Handler) playlistItemsForResponse(playlistID uint) ([]playlistMediaItem
 		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, row.ItemID)
 		if assetsMeta != nil {
 			if len(assetsMeta.Thumbnails) > 0 {
-				summary.ThumbURL = "/media/" + row.ItemID + "/" + assetsMeta.Thumbnails[0].StoragePath
+				summary.ThumbURL = thumbnailURL(row.ItemID, assetsMeta.Thumbnails[0])
 			}
 			for _, asset := range assetsMeta.Assets {
 				if asset.Kind == "master_mp4" || asset.Kind == "master_m4a" {
