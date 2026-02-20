@@ -30,9 +30,24 @@ const router = createRouter({
       component: () => import("../views/ItemView.vue"),
     },
     {
+      path: "/watch/:id",
+      name: "watch",
+      component: () => import("../views/ItemView.vue"),
+    },
+    {
       path: "/shorts",
       name: "shorts",
       component: () => import("../views/ShortsView.vue"),
+    },
+    {
+      path: "/playlists",
+      name: "playlists",
+      component: () => import("../views/PlaylistsView.vue"),
+    },
+    {
+      path: "/trash",
+      name: "trash",
+      component: () => import("../views/TrashView.vue"),
     },
     {
       path: "/personas",

@@ -51,6 +51,18 @@
           Profile
         </router-link>
         <router-link
+          to="/playlists"
+          class="px-6 py-3 bg-indigo-700 hover:bg-indigo-600 text-white font-medium rounded-lg transition-colors"
+        >
+          Playlists
+        </router-link>
+        <router-link
+          to="/trash"
+          class="px-6 py-3 bg-amber-700 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors"
+        >
+          Trash
+        </router-link>
+        <router-link
           v-if="isAdmin"
           to="/admin/users"
           class="px-6 py-3 bg-emerald-700 hover:bg-emerald-600 text-white font-medium rounded-lg transition-colors"

@@ -88,6 +88,15 @@
               <span class="text-2xl">ℹ️</span>
               <span class="text-xs mt-1">Info</span>
             </router-link>
+
+            <router-link
+              :to="`/playlists?item=${encodeURIComponent(clip.item_id)}`"
+              class="flex flex-col items-center text-white/80"
+              @click.stop
+            >
+              <span class="text-2xl">📁</span>
+              <span class="text-xs mt-1">Playlist</span>
+            </router-link>
           </div>
         </div>
 

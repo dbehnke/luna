@@ -315,3 +315,86 @@ export async function adminSetUserPassword(username, password) {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function listPlaylists(includeItems = true) {
+  const params = new URLSearchParams();
+  if (includeItems) params.append("include_items", "1");
+  const res = await fetch(`${API_BASE}/api/playlists?${params.toString()}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function createPlaylist(name) {
+  const res = await fetch(`${API_BASE}/api/playlists`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deletePlaylist(id) {
+  const res = await fetch(`${API_BASE}/api/playlists/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function addPlaylistItem(playlistId, itemId, position) {
+  const body = { item_id: itemId };
+  if (typeof position === "number") body.position = position;
+  const res = await fetch(`${API_BASE}/api/playlists/${playlistId}/items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function removePlaylistItem(playlistId, itemId) {
+  const res = await fetch(
+    `${API_BASE}/api/playlists/${playlistId}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function reorderPlaylist(playlistId, itemIds) {
+  const res = await fetch(`${API_BASE}/api/playlists/${playlistId}/reorder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item_ids: itemIds }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listTrashItems(scope = "mine") {
+  const params = new URLSearchParams();
+  if (scope === "all") params.append("scope", "all");
+  const res = await fetch(`${API_BASE}/api/items/trash?${params.toString()}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function restoreItem(id) {
+  const res = await fetch(`${API_BASE}/api/items/${id}/restore`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function purgeItem(id) {
+  const res = await fetch(`${API_BASE}/api/items/${id}/purge`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

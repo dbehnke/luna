@@ -5,12 +5,26 @@
         ← Back
       </router-link>
       <h1 class="text-xl font-bold text-white">Library</h1>
-      <router-link
-        to="/upload"
-        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-      >
-        + Upload
-      </router-link>
+      <div class="flex gap-2">
+        <router-link
+          to="/playlists"
+          class="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-2 rounded-lg transition-colors text-sm"
+        >
+          Playlists
+        </router-link>
+        <router-link
+          to="/trash"
+          class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-2 rounded-lg transition-colors text-sm"
+        >
+          Trash
+        </router-link>
+        <router-link
+          to="/upload"
+          class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+        >
+          + Upload
+        </router-link>
+      </div>
     </header>
 
     <main>
@@ -149,6 +163,15 @@
             </div>
           </router-link>
           <div class="px-3 pb-3 flex gap-2">
+            <router-link
+              :to="`/playlists?item=${encodeURIComponent(item.id)}`"
+              class="p-2 rounded-lg transition-colors text-indigo-400 hover:text-indigo-300"
+              title="Add to playlist"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"/>
+              </svg>
+            </router-link>
             <button
               @click.prevent="toggleFavorite(item)"
               :class="[
@@ -165,7 +188,7 @@
       </div>
 
       <div v-if="hasMore" class="text-center mt-6">
-        <button 
+        <button
           class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg"
           @click="loadMore"
           :disabled="loadingMore"
@@ -244,7 +267,7 @@ function updateURL() {
   if (showFavorites.value) query.favorites = '1'
   if (showHighlighted.value) query.highlighted = '1'
   if (sortOrder.value === 'old') query.sort = 'old'
-  
+
   router.replace({ query })
 }
 
@@ -278,7 +301,7 @@ async function loadItems(append = false) {
     loading.value = true
   }
   error.value = ''
-  
+
   try {
     const options = {
       limit: 24,
@@ -290,15 +313,15 @@ async function loadItems(append = false) {
     if (showFavorites.value) options.favorites = '1'
     if (showHighlighted.value) options.highlighted = '1'
     if (append && cursor.value) options.cursor = cursor.value
-    
+
     const result = await listItems(options)
-    
+
     if (append) {
       items.value = [...items.value, ...result.items]
     } else {
       items.value = result.items
     }
-    
+
     hasMore.value = result.has_more
     cursor.value = result.cursor || ''
   } catch (e) {
@@ -325,7 +348,7 @@ async function loadPersonas() {
 async function toggleFavorite(item) {
   const newState = !item.is_favorited
   item.is_favorited = newState
-  
+
   try {
     await setFavorite(item.id, newState)
   } catch (e) {
