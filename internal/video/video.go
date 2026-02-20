@@ -193,7 +193,7 @@ func (p *Processor) Transcode(itemID string, probeResult *ProbeResult) error {
 
 	outputPath := filepath.Join(derivedDir, "master.mp4")
 
-	tmpOutput := outputPath + ".tmp"
+	tmpOutput := outputPath + ".tmp.mp4"
 	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := MasterTranscodeArgs(originalFile, tmpOutput, *probeResult)
@@ -284,7 +284,7 @@ func (p *Processor) TranscodeAudio(itemID string, probeResult *ProbeResult) erro
 
 	outputPath := filepath.Join(derivedDir, "master.m4a")
 
-	tmpOutput := outputPath + ".tmp"
+	tmpOutput := outputPath + ".tmp.m4a"
 	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := AudioTranscodeArgs(originalFile, tmpOutput)
@@ -539,7 +539,7 @@ func (p *Processor) ProcessClip(itemID, clipID string, startMs, endMs int64) err
 
 	outputPath := filepath.Join(derivedDir, fmt.Sprintf("short_%s.mp4", clipID))
 
-	tmpOutput := outputPath + ".tmp"
+	tmpOutput := outputPath + ".tmp.mp4"
 	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := ClipTranscodeArgs(inputPath, tmpOutput, ProbeResult{}, startMs, endMs)
