@@ -1,0 +1,62 @@
+version: '3'
+
+tasks:
+  # Build frontend with Vite
+  build-frontend:
+    desc: Build the Vue frontend
+    cmds:
+      - cd web && bun install
+      - cd web && bun run build
+    env:
+      NODE_ENV: production
+
+  # Create embed directory for frontend files
+  prepare-embed:
+    desc: Copy frontend build to embed directory
+    cmds:
+      - rm -rf cmd/luna/frontend
+      - cp -r web/dist cmd/luna/frontend
+
+  # Build Go binary with embedded frontend
+  build-backend:
+    desc: Build Go backend with embedded frontend
+    cmds:
+      - go build -o luna -ldflags="-s -w" ./cmd/luna
+
+  # Full build: frontend + backend with embed
+  build:
+    desc: Build frontend and embed into Go binary
+    deps: [build-frontend, prepare-embed]
+    cmds:
+      - go build -o luna -ldflags="-s -w" ./cmd/luna
+
+  # Development build (faster, no embed)
+  dev:
+    desc: Build without embedding frontend
+    cmds:
+      - go build -o luna ./cmd/luna
+
+  # Clean build artifacts
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf cmd/luna/frontend
+      - rm -f luna
+
+  # Run the application
+  run:
+    desc: Run the Luna server
+    cmds:
+      - ./luna serve
+
+  # Run worker
+  worker:
+    desc: Run the Luna worker
+    cmds:
+      - ./luna worker
+
+  # Run doctor to check environment
+  doctor:
+    desc: Check environment and dependencies
+    cmds:
+      - ./luna doctor
