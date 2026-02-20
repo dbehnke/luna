@@ -53,7 +53,7 @@ Luna is an intranet family media app for videos, shorts, photos, and audio.
 ## Prerequisites
 
 - Go (matching `go.mod`)
-- Bun (for frontend build)
+- Bun (for local Taskfile/frontend workflows) or npm
 - ffmpeg + ffprobe available on `PATH`
 
 ## Quick Start
@@ -122,7 +122,7 @@ export LUNA_DEV_PORTSCAN=true
 
 - `task install-hooks`: configure repo git hooks (`.githooks`)
 - `task lint`: run `golangci-lint run ./...`
-- `task build-frontend`: bun install + vite build
+- `task build-frontend`: bun install + vite build (Taskfile uses Bun locally)
 - `task prepare-embed`: copy `web/dist` to `cmd/luna/frontend`
 - `task build-backend`: build production-style `luna` binary with embed
 - `task build`: full build (frontend + embedded backend)
@@ -254,6 +254,15 @@ cd web
 bun install
 bun run dev
 bun run build
+```
+
+Equivalent npm commands:
+
+```bash
+cd web
+npm ci
+npm run dev
+npm run build
 ```
 
 For integrated runs, prefer Taskfile commands so embed output is consistent.
