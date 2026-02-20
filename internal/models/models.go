@@ -86,6 +86,7 @@ type Persona struct {
 	UserID      uint           `gorm:"index;not null" json:"user_id"`
 	DisplayName string         `gorm:"size:255;not null" json:"display_name"`
 	Slug        string         `gorm:"size:255;not null;uniqueIndex:idx_persona_user_slug" json:"slug"`
+	Description string         `gorm:"type:text" json:"description"`
 	AvatarPath  string         `gorm:"size:512" json:"avatar_path"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`

@@ -1577,6 +1577,7 @@ func (h *Handler) AdminSetUserPassword(w http.ResponseWriter, r *http.Request, u
 type CreatePersonaRequest struct {
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	Description string `json:"description"`
 }
 
 type PersonaResponse struct {
@@ -1584,6 +1585,7 @@ type PersonaResponse struct {
 	UserID      uint   `json:"user_id"`
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	Description string `json:"description"`
 	AvatarURL   string `json:"avatar_url"`
 	CreatedAt   string `json:"created_at"`
 }
@@ -1606,12 +1608,38 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Description = strings.TrimSpace(req.Description)
+
 	baseSlug := normalizeSlug(req.DisplayName)
 	if req.Slug != "" {
 		baseSlug = normalizeSlug(req.Slug)
 	}
+	if baseSlug == "" {
+		http.Error(w, "invalid slug/display_name", http.StatusBadRequest)
+		return
+	}
 
-	slug, err := h.ensureUniqueSlug(user.ID, baseSlug)
+	// If a matching slug exists but is soft-deleted for this user, restore it in place.
+	var deletedMatch models.Persona
+	if err := h.db.Unscoped().Where("user_id = ? AND slug = ?", user.ID, baseSlug).First(&deletedMatch).Error; err == nil && deletedMatch.DeletedAt.Valid {
+		deletedMatch.DisplayName = req.DisplayName
+		deletedMatch.Description = req.Description
+		deletedMatch.DeletedAt = gorm.DeletedAt{}
+		deletedMatch.UpdatedAt = time.Now()
+		if saveErr := h.db.Unscoped().Save(&deletedMatch).Error; saveErr != nil {
+			http.Error(w, fmt.Sprintf("Failed to restore persona: %v", saveErr), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(personaToResponse(deletedMatch)); err != nil {
+			logging.Error.Printf("Failed to encode restored persona response for %s: %v", deletedMatch.ID, err)
+		}
+		return
+	}
+
+	slug, err := h.ensureUniqueSlug(baseSlug)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create slug: %v", err), http.StatusInternalServerError)
 		return
@@ -1622,6 +1650,7 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 		UserID:      user.ID,
 		DisplayName: req.DisplayName,
 		Slug:        slug,
+		Description: req.Description,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -1667,6 +1696,7 @@ func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
 type UpdatePersonaRequest struct {
 	DisplayName *string `json:"display_name,omitempty"`
 	Slug        *string `json:"slug,omitempty"`
+	Description *string `json:"description,omitempty"`
 }
 
 func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1704,12 +1734,20 @@ func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaI
 
 	if req.Slug != nil {
 		newSlug := normalizeSlug(*req.Slug)
+		if newSlug == "" {
+			http.Error(w, "Invalid slug", http.StatusBadRequest)
+			return
+		}
 		existingPersona := models.Persona{}
-		if err := h.db.Where("user_id = ? AND slug = ? AND id != ?", user.ID, newSlug, personaID).First(&existingPersona).Error; err == nil {
+		if err := h.db.Unscoped().Where("slug = ? AND id != ?", newSlug, personaID).First(&existingPersona).Error; err == nil {
 			http.Error(w, "A persona with this slug already exists", http.StatusConflict)
 			return
 		}
 		persona.Slug = newSlug
+	}
+
+	if req.Description != nil {
+		persona.Description = strings.TrimSpace(*req.Description)
 	}
 
 	persona.UpdatedAt = time.Now()
@@ -1817,14 +1855,14 @@ func normalizeSlug(s string) string {
 	return s
 }
 
-// ensureUniqueSlug ensures the slug is unique for the given user, appending -2, -3, etc. if needed
-func (h *Handler) ensureUniqueSlug(userID uint, baseSlug string) (string, error) {
+// ensureUniqueSlug ensures the slug is globally unique, appending -2, -3, etc. if needed.
+func (h *Handler) ensureUniqueSlug(baseSlug string) (string, error) {
 	slug := baseSlug
 	counter := 1
 
 	for {
 		var existing models.Persona
-		err := h.db.Where("user_id = ? AND slug = ?", userID, slug).First(&existing).Error
+		err := h.db.Unscoped().Where("slug = ?", slug).First(&existing).Error
 		if err == gorm.ErrRecordNotFound {
 			return slug, nil
 		}
@@ -1843,6 +1881,7 @@ func personaToResponse(p models.Persona) PersonaResponse {
 		UserID:      p.UserID,
 		DisplayName: p.DisplayName,
 		Slug:        p.Slug,
+		Description: p.Description,
 		AvatarURL:   avatarURL(p.AvatarPath),
 		CreatedAt:   p.CreatedAt.Format(time.RFC3339),
 	}
@@ -1957,6 +1996,7 @@ type ProfileResponse struct {
 	PersonaID   string `json:"persona_id"`
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	Description string `json:"description"`
 	AvatarURL   string `json:"avatar_url"`
 	CreatedAt   string `json:"created_at"`
 	Counts      struct {
@@ -1986,6 +2026,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 		PersonaID:   persona.ID,
 		DisplayName: persona.DisplayName,
 		Slug:        persona.Slug,
+		Description: persona.Description,
 		AvatarURL:   avatarURL(persona.AvatarPath),
 		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
 	}

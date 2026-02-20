@@ -164,13 +164,32 @@ export async function getPersonas() {
   return res.json();
 }
 
-export async function createPersona(displayName) {
+export async function createPersona(displayName, description = "") {
   const res = await fetch(`${API_BASE}/api/personas`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ display_name: displayName }),
+    body: JSON.stringify({
+      display_name: displayName,
+      description: description,
+    }),
   });
-  if (!res.ok) throw new Error("Failed to create persona");
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to create persona");
+  }
+  return res.json();
+}
+
+export async function updatePersona(personaId, updates) {
+  const res = await fetch(`${API_BASE}/api/personas/${personaId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to update persona");
+  }
   return res.json();
 }
 

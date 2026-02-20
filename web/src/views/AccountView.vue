@@ -20,13 +20,19 @@
       <section class="bg-[#0a2540] rounded-lg p-6 space-y-6">
         <div>
           <h2 class="text-lg font-semibold text-white mb-4">Create Persona</h2>
-          <div class="flex gap-3">
+          <div class="space-y-3">
             <input
               v-model="newPersonaName"
               type="text"
               placeholder="Persona name..."
               class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
               @keyup.enter="doCreatePersona"
+            />
+            <textarea
+              v-model="newPersonaDescription"
+              placeholder="Persona description..."
+              rows="3"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
             />
             <button
               @click="doCreatePersona"
@@ -52,46 +58,92 @@
           <div
             v-for="persona in personas"
             :key="persona.id"
-            class="flex items-center justify-between bg-gray-800 rounded-lg p-4"
+            class="bg-gray-800 rounded-lg p-4"
           >
-            <div class="flex items-center gap-3">
-              <div class="relative">
-                <img
-                  v-if="persona.avatar_url"
-                  :src="persona.avatar_url"
-                  class="w-10 h-10 rounded-full object-cover"
-                  alt="Avatar"
-                />
-                <span
-                  v-else
-                  class="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-medium"
-                >
-                  {{ getInitials(persona.display_name) }}
-                </span>
-                <label
-                  class="absolute -bottom-1 -right-1 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700"
-                >
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    class="hidden"
-                    :disabled="uploading"
-                    @change="(e) => handleAvatarUpload(persona.id, e)"
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="relative">
+                  <img
+                    v-if="persona.avatar_url"
+                    :src="persona.avatar_url"
+                    class="w-10 h-10 rounded-full object-cover"
+                    alt="Avatar"
                   />
-                  <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </label>
+                  <span
+                    v-else
+                    class="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-medium"
+                  >
+                    {{ getInitials(persona.display_name) }}
+                  </span>
+                  <label
+                    class="absolute -bottom-1 -right-1 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700"
+                  >
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      class="hidden"
+                      :disabled="uploading"
+                      @change="(e) => handleAvatarUpload(persona.id, e)"
+                    />
+                    <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </label>
+                </div>
+                <div>
+                  <span class="text-white font-medium">{{ persona.display_name }}</span>
+                  <p v-if="persona.description" class="text-xs text-gray-400 mt-1">
+                    {{ persona.description }}
+                  </p>
+                </div>
               </div>
-              <span class="text-white font-medium">{{ persona.display_name }}</span>
+              <div class="flex items-center gap-2">
+                <button
+                  @click="startEditing(persona)"
+                  class="text-xs text-gray-300 hover:text-white"
+                >
+                  Edit
+                </button>
+                <router-link
+                  :to="`/@${persona.slug}`"
+                  class="text-xs text-blue-300 hover:text-blue-200"
+                >
+                  View
+                </router-link>
+              </div>
             </div>
-            <router-link
-              :to="`/@${persona.slug}`"
-              class="text-xs text-blue-300 hover:text-blue-200"
+
+            <div
+              v-if="editingPersonaId === persona.id"
+              class="mt-3 pt-3 border-t border-gray-700 space-y-2"
             >
-              View
-            </router-link>
+              <input
+                v-model="editPersonaName"
+                type="text"
+                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white"
+              />
+              <textarea
+                v-model="editPersonaDescription"
+                rows="3"
+                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white resize-none"
+              />
+              <div class="flex gap-2">
+                <button
+                  @click="savePersona(persona.id)"
+                  :disabled="savingEdit || !editPersonaName.trim()"
+                  class="bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm"
+                >
+                  Save
+                </button>
+                <button
+                  @click="cancelEditing"
+                  class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -107,6 +159,7 @@ import {
   createPersona,
   getCurrentUser,
   getPersonas,
+  updatePersona,
   uploadPersonaAvatar,
 } from "../services/api";
 
@@ -117,6 +170,11 @@ const creating = ref(false);
 const uploading = ref(false);
 const error = ref("");
 const newPersonaName = ref("");
+const newPersonaDescription = ref("");
+const editingPersonaId = ref(null);
+const editPersonaName = ref("");
+const editPersonaDescription = ref("");
+const savingEdit = ref(false);
 
 async function loadCurrentUser() {
   currentUser.value = await getCurrentUser();
@@ -143,13 +201,44 @@ async function doCreatePersona() {
   error.value = "";
 
   try {
-    await createPersona(newPersonaName.value.trim());
+    await createPersona(newPersonaName.value.trim(), newPersonaDescription.value.trim());
     newPersonaName.value = "";
+    newPersonaDescription.value = "";
     await loadPersonas();
   } catch (e) {
     error.value = e.message || "Failed to create persona";
   } finally {
     creating.value = false;
+  }
+}
+
+function startEditing(persona) {
+  editingPersonaId.value = persona.id;
+  editPersonaName.value = persona.display_name || "";
+  editPersonaDescription.value = persona.description || "";
+}
+
+function cancelEditing() {
+  editingPersonaId.value = null;
+  editPersonaName.value = "";
+  editPersonaDescription.value = "";
+}
+
+async function savePersona(personaId) {
+  if (!editPersonaName.value.trim()) return;
+  savingEdit.value = true;
+  error.value = "";
+  try {
+    await updatePersona(personaId, {
+      display_name: editPersonaName.value.trim(),
+      description: editPersonaDescription.value.trim(),
+    });
+    cancelEditing();
+    await loadPersonas();
+  } catch (e) {
+    error.value = e.message || "Failed to update persona";
+  } finally {
+    savingEdit.value = false;
   }
 }
 
