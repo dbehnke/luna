@@ -87,16 +87,13 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 
 	var personaDisplayName *string
-	var personaID *uint
+	var personaID *string
 
 	if req.PersonaID != nil && *req.PersonaID != "" {
-		pid, err := strconv.ParseUint(*req.PersonaID, 10, 32)
-		if err == nil {
-			var persona models.Persona
-			if err := h.db.First(&persona, pid).Error; err == nil && persona.UserID == user.ID {
-				personaID = &persona.ID
-				personaDisplayName = &persona.DisplayName
-			}
+		var persona models.Persona
+		if err := h.db.First(&persona, "id = ?", *req.PersonaID).Error; err == nil && persona.UserID == user.ID {
+			personaID = &persona.ID
+			personaDisplayName = &persona.DisplayName
 		}
 	}
 
@@ -126,6 +123,7 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		ItemID:             itemID,
 		Type:               req.Type,
 		OwnerUsername:      user.Username,
+		PersonaID:          personaID,
 		PersonaDisplayName: personaDisplayName,
 		Title:              req.Title,
 		Description:        req.Description,
@@ -801,6 +799,233 @@ func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID st
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"clips": responses,
+	})
+}
+
+type CreatePersonaRequest struct {
+	DisplayName string `json:"display_name"`
+	Slug        string `json:"slug"`
+}
+
+type PersonaResponse struct {
+	ID          string `json:"id"`
+	UserID      uint   `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Slug        string `json:"slug"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req CreatePersonaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.DisplayName == "" {
+		http.Error(w, "display_name is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Slug == "" {
+		req.Slug = req.DisplayName
+	}
+
+	existingPersona := models.Persona{}
+	if err := h.db.Where("user_id = ? AND slug = ?", user.ID, req.Slug).First(&existingPersona).Error; err == nil {
+		http.Error(w, "A persona with this slug already exists", http.StatusConflict)
+		return
+	}
+
+	persona := models.Persona{
+		ID:          id.NewULID(),
+		UserID:      user.ID,
+		DisplayName: req.DisplayName,
+		Slug:        req.Slug,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := h.db.Create(&persona).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create persona: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(PersonaResponse{
+		ID:          persona.ID,
+		UserID:      persona.UserID,
+		DisplayName: persona.DisplayName,
+		Slug:        persona.Slug,
+		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var personas []models.Persona
+	if err := h.db.Where("user_id = ?", user.ID).Order("created_at DESC").Find(&personas).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list personas: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	responses := make([]PersonaResponse, len(personas))
+	for i, p := range personas {
+		responses[i] = PersonaResponse{
+			ID:          p.ID,
+			UserID:      p.UserID,
+			DisplayName: p.DisplayName,
+			Slug:        p.Slug,
+			CreatedAt:   p.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"personas": responses,
+	})
+}
+
+type UpdatePersonaRequest struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	Slug        *string `json:"slug,omitempty"`
+}
+
+func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if personaID == "" {
+		http.Error(w, "Persona ID required", http.StatusBadRequest)
+		return
+	}
+
+	var persona models.Persona
+	if err := h.db.First(&persona, "id = ?", personaID).Error; err != nil {
+		http.Error(w, "Persona not found", http.StatusNotFound)
+		return
+	}
+
+	if persona.UserID != user.ID {
+		http.Error(w, "Forbidden - you can only update your own personas", http.StatusForbidden)
+		return
+	}
+
+	var req UpdatePersonaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.DisplayName != nil {
+		persona.DisplayName = *req.DisplayName
+	}
+
+	if req.Slug != nil {
+		existingPersona := models.Persona{}
+		if err := h.db.Where("user_id = ? AND slug = ? AND id != ?", user.ID, *req.Slug, personaID).First(&existingPersona).Error; err == nil {
+			http.Error(w, "A persona with this slug already exists", http.StatusConflict)
+			return
+		}
+		persona.Slug = *req.Slug
+	}
+
+	persona.UpdatedAt = time.Now()
+
+	if err := h.db.Save(&persona).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update persona: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PersonaResponse{
+		ID:          persona.ID,
+		UserID:      persona.UserID,
+		DisplayName: persona.DisplayName,
+		Slug:        persona.Slug,
+		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) DeletePersona(w http.ResponseWriter, r *http.Request, personaID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if personaID == "" {
+		http.Error(w, "Persona ID required", http.StatusBadRequest)
+		return
+	}
+
+	var persona models.Persona
+	if err := h.db.First(&persona, "id = ?", personaID).Error; err != nil {
+		http.Error(w, "Persona not found", http.StatusNotFound)
+		return
+	}
+
+	if persona.UserID != user.ID {
+		http.Error(w, "Forbidden - you can only delete your own personas", http.StatusForbidden)
+		return
+	}
+
+	if err := h.db.Delete(&persona).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete persona: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "deleted",
+	})
+}
+
+func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request, personaID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if personaID == "" {
+		http.Error(w, "Persona ID required", http.StatusBadRequest)
+		return
+	}
+
+	var persona models.Persona
+	if err := h.db.First(&persona, "id = ?", personaID).Error; err != nil {
+		http.Error(w, "Persona not found", http.StatusNotFound)
+		return
+	}
+
+	if persona.UserID != user.ID {
+		http.Error(w, "Forbidden - you can only view your own personas", http.StatusForbidden)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PersonaResponse{
+		ID:          persona.ID,
+		UserID:      persona.UserID,
+		DisplayName: persona.DisplayName,
+		Slug:        persona.Slug,
+		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
 	})
 }
 

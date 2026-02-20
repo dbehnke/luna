@@ -24,6 +24,7 @@ type ItemMeta struct {
 	ItemID             string       `json:"item_id"`
 	Type               string       `json:"type"` // "video" or "photo"
 	OwnerUsername      string       `json:"owner_username"`
+	PersonaID          *string      `json:"persona_id,omitempty"`
 	PersonaDisplayName *string      `json:"persona_display_name,omitempty"`
 	Title              string       `json:"title"`
 	Description        string       `json:"description,omitempty"`

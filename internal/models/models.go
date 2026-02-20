@@ -58,11 +58,12 @@ type User struct {
 
 // Persona represents a character that a user can upload as
 type Persona struct {
-	ID          uint           `gorm:"primaryKey" json:"id"`
+	ID          string         `gorm:"primaryKey;size:26" json:"id"`
 	UserID      uint           `gorm:"index;not null" json:"user_id"`
 	DisplayName string         `gorm:"size:255;not null" json:"display_name"`
-	AvatarPath  string         `gorm:"size:512" json:"avatar_path"`
+	Slug        string         `gorm:"size:255;not null;index" json:"slug"`
 	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 	User        User           `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
@@ -71,7 +72,7 @@ type Persona struct {
 type MediaItem struct {
 	ID            string         `gorm:"primaryKey;size:26" json:"id"` // ULID string
 	UserID        uint           `gorm:"index;not null" json:"user_id"`
-	PersonaID     *uint          `gorm:"index" json:"persona_id"`
+	PersonaID     *string        `gorm:"index" json:"persona_id"`
 	Type          string         `gorm:"size:50;not null;index" json:"type"` // video or photo
 	Title         string         `gorm:"size:500;not null" json:"title"`
 	Description   string         `gorm:"type:text" json:"description"`
