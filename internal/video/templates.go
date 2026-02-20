@@ -260,3 +260,23 @@ func HLSArgs(inPath string, outDir string, variants []HLSVariant, sourceWidth, s
 
 	return args
 }
+
+// AudioTranscodeArgs builds ffmpeg arguments for transcoding audio to master M4A.
+//
+// Requirements:
+// - AAC codec in M4A container
+// - Faststart enabled (moov atom at beginning)
+// - Normalize to stereo if needed
+// - Use 44.1k or 48k sample rate
+// - Use VBR or fixed bitrate (128k)
+func AudioTranscodeArgs(inPath string, outPath string) []string {
+	args := []string{
+		"-y",
+		"-i", inPath,
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-movflags", "+faststart",
+	}
+	args = append(args, outPath)
+	return args
+}

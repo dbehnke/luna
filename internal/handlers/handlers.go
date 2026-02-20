@@ -83,8 +83,8 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Type != "video" && req.Type != "photo" {
-		http.Error(w, "Invalid type: must be 'video' or 'photo'", http.StatusBadRequest)
+	if req.Type != models.MediaTypeVideo && req.Type != models.MediaTypePhoto && req.Type != models.MediaTypeAudio {
+		http.Error(w, "Invalid type: must be 'video', 'photo', or 'audio'", http.StatusBadRequest)
 		return
 	}
 
@@ -260,6 +260,12 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		}
 	}
 
+	if mediaItem.Type == models.MediaTypeAudio {
+		if err := h.jobQueue.EnqueueAudioProcessing(itemID); err != nil {
+			logging.Info.Printf("Failed to enqueue audio processing jobs for %s: %v", itemID, err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"item_id":   itemID,
@@ -349,6 +355,20 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if item.Type == models.MediaTypeAudio {
+			status, _ := h.jobQueue.GetProcessingStatus(item.ID)
+			resp.ProcessingStatus = status
+
+			assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
+			if assetsMeta != nil {
+				for _, asset := range assetsMeta.Assets {
+					if asset.Kind == "master_m4a" {
+						resp.MasterURL = "/media/" + item.ID + "/" + asset.StoragePath
+					}
+				}
+			}
+		}
+
 		responses[i] = resp
 	}
 
@@ -420,6 +440,25 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 
 			for _, thumb := range assetsMeta.Thumbnails {
 				resp.ThumbURLs = append(resp.ThumbURLs, "/media/"+item.ID+"/"+thumb.StoragePath)
+			}
+		}
+	}
+
+	if item.Type == models.MediaTypeAudio {
+		status, _ := h.jobQueue.GetProcessingStatus(itemID)
+		resp.ProcessingStatus = status
+
+		if status == "failed" {
+			if errMsg, _ := h.jobQueue.GetJobError(itemID); errMsg != "" {
+				resp.ErrorMessage = errMsg
+			}
+		}
+
+		if assetsMeta != nil {
+			for _, asset := range assetsMeta.Assets {
+				if asset.Kind == "master_m4a" {
+					resp.MasterURL = "/media/" + item.ID + "/" + asset.StoragePath
+				}
 			}
 		}
 	}

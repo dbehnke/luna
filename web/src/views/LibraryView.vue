@@ -42,6 +42,15 @@
         >
           Photos
         </button>
+        <button
+          @click="filterType = 'audio'"
+          :class="[
+            'px-4 py-2 rounded-lg transition-colors',
+            filterType === 'audio' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'
+          ]"
+        >
+          Audio
+        </button>
       </div>
 
       <div v-if="loading" class="text-center text-gray-400 py-8">
@@ -79,11 +88,12 @@
               :alt="item.title"
               class="w-full h-full object-cover"
             />
+            <span v-else-if="item.type === 'audio'" class="text-4xl">🎵</span>
             <span v-else class="text-4xl">
               {{ item.type === 'video' ? '🎬' : '📷' }}
             </span>
             <span
-              v-if="item.type === 'video' && item.processing_status && item.processing_status !== 'ready'"
+              v-if="(item.type === 'video' || item.type === 'audio') && item.processing_status && item.processing_status !== 'ready'"
               class="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium bg-black/70 text-white"
             >
               {{ item.processing_status }}

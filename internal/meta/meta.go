@@ -52,13 +52,15 @@ type AssetsMeta struct {
 }
 
 type SourceInfo struct {
-	DurationMs int64  `json:"duration_ms"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	Rotation   int    `json:"rotation"`
-	VideoCodec string `json:"video_codec"`
-	AudioCodec string `json:"audio_codec"`
-	Bitrate    string `json:"bitrate"`
+	DurationMs      int64  `json:"duration_ms"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	Rotation        int    `json:"rotation"`
+	VideoCodec      string `json:"video_codec"`
+	AudioCodec      string `json:"audio_codec"`
+	Bitrate         string `json:"bitrate"`
+	AudioSampleRate int    `json:"audio_sample_rate"`
+	AudioChannels   int    `json:"audio_channels"`
 }
 
 type Asset struct {

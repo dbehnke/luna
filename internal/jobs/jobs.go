@@ -105,6 +105,23 @@ func (q *Queue) EnqueueVideoProcessing(itemID string) error {
 	return nil
 }
 
+// EnqueueAudioProcessing enqueues jobs for audio processing (probe + transcode)
+func (q *Queue) EnqueueAudioProcessing(itemID string) error {
+	// Probe - high priority, runs first
+	_, err := q.Enqueue(models.JobTypeProbe, models.JobStatusQueued, 100, ProbePayload{ItemID: itemID})
+	if err != nil {
+		return fmt.Errorf("enqueue probe: %w", err)
+	}
+
+	// Transcode - normal priority
+	_, err = q.Enqueue(models.JobTypeTranscode, models.JobStatusQueued, 50, TranscodePayload{ItemID: itemID})
+	if err != nil {
+		return fmt.Errorf("enqueue transcode: %w", err)
+	}
+
+	return nil
+}
+
 // Claim selects and locks a job for processing
 func (q *Queue) Claim(workerID string, maxConcurrency int, jobTypes []string) (*models.Job, error) {
 	var job models.Job

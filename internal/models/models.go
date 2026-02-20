@@ -16,6 +16,7 @@ const (
 const (
 	MediaTypeVideo = "video"
 	MediaTypePhoto = "photo"
+	MediaTypeAudio = "audio"
 )
 
 // JobType constants

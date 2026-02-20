@@ -51,8 +51,27 @@
             :alt="item.title"
             class="max-h-full max-w-full object-contain"
           />
+          <audio
+            v-else-if="item.type === 'audio' && (item.master_url || item.media_url)"
+            controls
+            class="w-full max-w-md"
+          >
+            <source v-if="item.master_url" :src="item.master_url" />
+            <source v-else-if="item.media_url" :src="item.media_url" />
+            Your browser does not support audio playback.
+          </audio>
+          <div
+            v-else-if="item.type === 'audio' && !item.master_url && !item.media_url"
+            class="absolute inset-0 flex flex-col items-center justify-center bg-black/80"
+          >
+            <span class="text-4xl mb-2">⏳</span>
+            <span class="text-gray-300">Processing...</span>
+            <span v-if="item.processing_status" class="text-gray-400 text-sm mt-1">
+              Status: {{ item.processing_status }}
+            </span>
+          </div>
           <span v-else class="text-6xl">
-            {{ item.type === 'video' ? '🎬' : '📷' }}
+            {{ item.type === 'video' ? '🎬' : item.type === 'audio' ? '🎵' : '📷' }}
           </span>
         </div>
 
@@ -62,7 +81,7 @@
               {{ item.title || 'Untitled' }}
             </h1>
             <span
-              v-if="item.type === 'video' && item.processing_status"
+              v-if="(item.type === 'video' || item.type === 'audio') && item.processing_status"
               :class="[
                 'px-2 py-1 rounded text-xs font-medium',
                 item.processing_status === 'ready' ? 'bg-green-600 text-white' :

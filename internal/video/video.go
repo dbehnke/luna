@@ -45,6 +45,8 @@ type ProbeResult struct {
 	VideoCodec string  `json:"video_codec"`
 	AudioCodec string  `json:"audio_codec"`
 	Bitrate    string  `json:"bitrate"`
+	SampleRate int     `json:"sample_rate"`
+	Channels   int     `json:"channels"`
 }
 
 func (p *Processor) Probe(itemID string) (*ProbeResult, error) {
@@ -132,6 +134,14 @@ func (p *Processor) Probe(itemID string) (*ProbeResult, error) {
 			if codecType == "audio" {
 				if ac, ok := stream["codec_name"].(string); ok {
 					probe.AudioCodec = ac
+				}
+				if sr, ok := stream["sample_rate"].(string); ok {
+					if r, err := strconv.Atoi(sr); err == nil {
+						probe.SampleRate = r
+					}
+				}
+				if ch, ok := stream["channels"].(float64); ok {
+					probe.Channels = int(ch)
 				}
 			}
 		}
@@ -221,6 +231,87 @@ func (p *Processor) Transcode(itemID string, probeResult *ProbeResult) error {
 			Width:       width,
 			Height:      height,
 			Codecs:      "h264/aac",
+		})
+	}
+
+	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
+		return fmt.Errorf("write assets meta: %w", err)
+	}
+
+	return nil
+}
+
+func (p *Processor) TranscodeAudio(itemID string, probeResult *ProbeResult) error {
+	inputPath := filepath.Join(p.mediaRoot, "items", itemID, "original")
+	entries, err := os.ReadDir(inputPath)
+	if err != nil {
+		return fmt.Errorf("read original dir: %w", err)
+	}
+
+	var originalFile string
+	for _, e := range entries {
+		if !e.IsDir() {
+			originalFile = filepath.Join(inputPath, e.Name())
+			break
+		}
+	}
+
+	if originalFile == "" {
+		return fmt.Errorf("no original file found")
+	}
+
+	derivedDir := filepath.Join(p.mediaRoot, "items", itemID, "derived")
+	if err := os.MkdirAll(derivedDir, 0755); err != nil {
+		return fmt.Errorf("create derived dir: %w", err)
+	}
+
+	outputPath := filepath.Join(derivedDir, "master.m4a")
+
+	tmpOutput := outputPath + ".tmp"
+	defer os.Remove(tmpOutput)
+
+	args := AudioTranscodeArgs(originalFile, tmpOutput)
+
+	cmd := exec.Command("ffmpeg", args...)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg audio transcode failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return fmt.Errorf("rename output: %w", err)
+	}
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read assets meta: %w", err)
+	}
+	if assetsMeta == nil {
+		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
+	}
+
+	updated := false
+	for i := range assetsMeta.Assets {
+		if assetsMeta.Assets[i].Kind == "master_m4a" {
+			assetsMeta.Assets[i] = meta.Asset{
+				Kind:        "master_m4a",
+				StoragePath: "derived/master.m4a",
+				Codecs:      "aac",
+				Bitrate:     "128k",
+			}
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		assetsMeta.Assets = append(assetsMeta.Assets, meta.Asset{
+			Kind:        "master_m4a",
+			StoragePath: "derived/master.m4a",
+			Codecs:      "aac",
+			Bitrate:     "128k",
 		})
 	}
 
@@ -325,13 +416,15 @@ func (p *Processor) ProcessProbe(itemID string) error {
 	}
 
 	assetsMeta.SourceInfo = &meta.SourceInfo{
-		DurationMs: int64(probe.Duration * 1000),
-		Width:      probe.Width,
-		Height:     probe.Height,
-		Rotation:   probe.Rotation,
-		VideoCodec: probe.VideoCodec,
-		AudioCodec: probe.AudioCodec,
-		Bitrate:    probe.Bitrate,
+		DurationMs:      int64(probe.Duration * 1000),
+		Width:           probe.Width,
+		Height:          probe.Height,
+		Rotation:        probe.Rotation,
+		VideoCodec:      probe.VideoCodec,
+		AudioCodec:      probe.AudioCodec,
+		Bitrate:         probe.Bitrate,
+		AudioSampleRate: probe.SampleRate,
+		AudioChannels:   probe.Channels,
 	}
 
 	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
@@ -350,10 +443,18 @@ func (p *Processor) ProcessTranscode(itemID string) error {
 	var probeResult ProbeResult
 	if assetsMeta != nil && assetsMeta.SourceInfo != nil {
 		probeResult = ProbeResult{
-			Width:    assetsMeta.SourceInfo.Width,
-			Height:   assetsMeta.SourceInfo.Height,
-			Rotation: assetsMeta.SourceInfo.Rotation,
+			Width:      assetsMeta.SourceInfo.Width,
+			Height:     assetsMeta.SourceInfo.Height,
+			Rotation:   assetsMeta.SourceInfo.Rotation,
+			AudioCodec: assetsMeta.SourceInfo.AudioCodec,
+			SampleRate: assetsMeta.SourceInfo.AudioSampleRate,
+			Channels:   assetsMeta.SourceInfo.AudioChannels,
 		}
+	}
+
+	// Check if this is an audio item (no video codec, but has audio codec)
+	if assetsMeta != nil && assetsMeta.SourceInfo != nil && assetsMeta.SourceInfo.VideoCodec == "" && assetsMeta.SourceInfo.AudioCodec != "" {
+		return p.TranscodeAudio(itemID, &probeResult)
 	}
 
 	return p.Transcode(itemID, &probeResult)
