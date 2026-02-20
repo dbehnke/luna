@@ -1,8 +1,17 @@
 <template>
   <div class="min-h-screen bg-[#07182c]">
+    <router-link
+      v-if="showGlobalNav"
+      to="/"
+      class="md:hidden fixed top-3 left-3 z-[70] w-10 h-10 rounded-lg bg-[#0a2540] flex items-center justify-center"
+      aria-label="Go to home"
+    >
+      <img :src="lunaMark" alt="Luna" class="w-7 h-7" />
+    </router-link>
+
     <button
       v-if="showGlobalNav"
-      class="md:hidden fixed top-3 left-3 z-[70] w-10 h-10 rounded-lg bg-[#0a2540] text-white flex items-center justify-center"
+      class="md:hidden fixed top-3 right-3 z-[70] w-10 h-10 rounded-lg bg-[#0a2540] text-white flex items-center justify-center"
       @click="mobileNavOpen = true"
       aria-label="Open navigation menu"
     >
@@ -141,6 +150,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getCurrentUser, logout } from "./services/api";
+import lunaMark from "/src/assets/brand/luna-mark.png";
 
 const route = useRoute();
 const router = useRouter();
