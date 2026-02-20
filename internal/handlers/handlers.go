@@ -1100,6 +1100,7 @@ type CurrentUserResponse struct {
 	ID       uint   `json:"id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	IsActive bool   `json:"is_active"`
 }
 
 type LoginRequest struct {
@@ -1135,6 +1136,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
+	if !user.IsActive {
+		http.Error(w, "Account is deactivated", http.StatusForbidden)
+		return
+	}
 
 	token, err := auth.NewSessionToken()
 	if err != nil {
@@ -1161,6 +1166,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		ID:       user.ID,
 		Username: user.Username,
 		Role:     user.Role,
+		IsActive: user.IsActive,
 	})
 }
 
@@ -1194,6 +1200,7 @@ func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		ID:       user.ID,
 		Username: user.Username,
 		Role:     user.Role,
+		IsActive: user.IsActive,
 	})
 }
 

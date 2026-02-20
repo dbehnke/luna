@@ -58,14 +58,16 @@ const (
 
 // User represents a user account
 type User struct {
-	ID           uint           `gorm:"primaryKey" json:"id"`
-	Username     string         `gorm:"uniqueIndex;size:255;not null" json:"username"`
-	PasswordHash string         `gorm:"size:255;not null" json:"-"`
-	Role         string         `gorm:"size:50;default:user" json:"role"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-	Personas     []Persona      `gorm:"foreignKey:UserID" json:"personas,omitempty"`
+	ID            uint           `gorm:"primaryKey" json:"id"`
+	Username      string         `gorm:"uniqueIndex;size:255;not null" json:"username"`
+	PasswordHash  string         `gorm:"size:255;not null" json:"-"`
+	Role          string         `gorm:"size:50;default:user" json:"role"`
+	IsActive      bool           `gorm:"not null;default:true;index" json:"is_active"`
+	DeactivatedAt *time.Time     `json:"deactivated_at,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	Personas      []Persona      `gorm:"foreignKey:UserID" json:"personas,omitempty"`
 }
 
 // Session represents an authenticated browser session.

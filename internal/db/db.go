@@ -34,7 +34,9 @@ func New(cfg *config.Config) (*DB, error) {
 }
 
 func (d *DB) AutoMigrate() error {
-	return d.DB.AutoMigrate(
+	hadUserIsActive := d.DB.Migrator().HasColumn(&models.User{}, "is_active")
+
+	if err := d.DB.AutoMigrate(
 		&models.User{},
 		&models.Session{},
 		&models.Persona{},
@@ -44,7 +46,17 @@ func (d *DB) AutoMigrate() error {
 		&models.Reaction{},
 		&models.Favorite{},
 		&models.SchemaVersion{},
-	)
+	); err != nil {
+		return err
+	}
+
+	if !hadUserIsActive {
+		if err := d.DB.Model(&models.User{}).Where("is_active = ?", false).Update("is_active", true).Error; err != nil {
+			return fmt.Errorf("backfill users.is_active: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (d *DB) AutoMigrateModels(models ...interface{}) error {

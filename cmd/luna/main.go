@@ -108,6 +108,7 @@ func serveCommand(cfg *config.Config) *cli.Command {
 					Username:     "devuser",
 					PasswordHash: passwordHash,
 					Role:         models.RoleAdmin,
+					IsActive:     true,
 				}
 				if err := database.Create(&devUser).Error; err != nil {
 					return fmt.Errorf("create default user: %w", err)
@@ -531,6 +532,7 @@ func importCommand(cfg *config.Config) *cli.Command {
 					Username:     username,
 					PasswordHash: passwordHash,
 					Role:         models.RoleUser,
+					IsActive:     true,
 				}
 				if createErr := database.Create(&user).Error; createErr != nil {
 					return fmt.Errorf("create import user: %w", createErr)
@@ -767,6 +769,7 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 						Username:     itemMeta.OwnerUsername,
 						PasswordHash: passwordHash,
 						Role:         models.RoleUser,
+						IsActive:     true,
 					}
 					if err := database.Create(&user).Error; err != nil {
 						logging.Error.Printf("Failed to create user %s: %v", itemMeta.OwnerUsername, err)

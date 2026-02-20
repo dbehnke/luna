@@ -61,6 +61,9 @@ func (m *Middleware) getSessionUser(r *http.Request) *models.User {
 	}
 
 	user := session.User
+	if !user.IsActive {
+		return nil
+	}
 	return &user
 }
 
