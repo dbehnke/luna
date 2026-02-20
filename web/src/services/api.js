@@ -1,5 +1,15 @@
 const API_BASE = ''
 
+export function getPersonaDisplayName(item) {
+  if (item.persona && typeof item.persona === 'object') {
+    return item.persona.display_name || null
+  }
+  if (item.persona_display_name) {
+    return item.persona_display_name
+  }
+  return null
+}
+
 export async function createItem(type, title = '', description = '', personaId = null) {
   const res = await fetch(`${API_BASE}/api/items`, {
     method: 'POST',
@@ -86,5 +96,21 @@ export async function setReaction(itemId, value) {
     body: JSON.stringify({ value })
   })
   if (!res.ok) throw new Error('Failed to set reaction')
+  return res.json()
+}
+
+export async function getPersonas() {
+  const res = await fetch(`${API_BASE}/api/personas`)
+  if (!res.ok) throw new Error('Failed to get personas')
+  return res.json()
+}
+
+export async function createPersona(displayName) {
+  const res = await fetch(`${API_BASE}/api/personas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name: displayName })
+  })
+  if (!res.ok) throw new Error('Failed to create persona')
   return res.json()
 }

@@ -56,7 +56,9 @@
         <div v-if="index === currentIndex" class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
           <div class="mb-2">
             <h3 class="text-white font-bold text-lg">{{ clip.title }}</h3>
-            <p class="text-white/70 text-sm">@{{ clip.owner_name }}</p>
+            <div class="flex items-center gap-2 mt-1">
+              <PersonaBadge :display-name="getPersonaDisplayName(clip)" variant="overlay" />
+            </div>
           </div>
           
           <div class="flex gap-4 mt-4">
@@ -103,7 +105,8 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { listShorts, setReaction } from '../services/api'
+import { listShorts, setReaction, getPersonaDisplayName } from '../services/api'
+import PersonaBadge from '../components/PersonaBadge.vue'
 
 const clips = ref([])
 const loading = ref(true)

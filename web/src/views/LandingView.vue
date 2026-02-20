@@ -44,6 +44,12 @@
         >
           Upload
         </router-link>
+        <router-link
+          to="/personas"
+          class="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors"
+        >
+          Personas
+        </router-link>
       </div>
     </main>
 

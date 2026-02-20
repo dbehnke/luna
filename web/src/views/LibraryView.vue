@@ -90,6 +90,9 @@
             </span>
           </div>
           <div class="p-3">
+            <div class="flex items-center gap-2 mb-1">
+              <PersonaBadge :display-name="getPersonaDisplayName(item)" variant="compact" />
+            </div>
             <h3 class="text-white font-medium truncate">{{ item.title || 'Untitled' }}</h3>
             <p class="text-gray-400 text-sm">{{ formatDate(item.created_at) }}</p>
           </div>
@@ -101,7 +104,8 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { listItems } from '../services/api'
+import { listItems, getPersonaDisplayName } from '../services/api'
+import PersonaBadge from '../components/PersonaBadge.vue'
 
 const items = ref([])
 const loading = ref(true)

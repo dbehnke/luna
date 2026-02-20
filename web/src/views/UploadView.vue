@@ -51,6 +51,30 @@
             />
           </div>
 
+          <div v-if="!loadingPersonas && personas.length > 0">
+            <label class="block text-sm text-gray-400 mb-2">Upload as</label>
+            <div class="flex gap-3 items-center">
+              <select
+                v-model="selectedPersonaId"
+                @change="updateSelectedPersona"
+                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              >
+                <option :value="null">Self</option>
+                <option
+                  v-for="persona in personas"
+                  :key="persona.persona_id"
+                  :value="persona.persona_id"
+                >
+                  {{ persona.display_name }}
+                </option>
+              </select>
+              <PersonaBadge
+                v-if="selectedPersonaId !== null"
+                :display-name="selectedPersona?.display_name"
+              />
+            </div>
+          </div>
+
           <div>
             <label class="block text-sm text-gray-400 mb-2">Description (optional)</label>
             <textarea
@@ -138,9 +162,10 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { createItem, uploadFile } from '../services/api'
+import { createItem, uploadFile, getPersonas } from '../services/api'
+import PersonaBadge from '../components/PersonaBadge.vue'
 
 const router = useRouter()
 
@@ -149,6 +174,30 @@ const title = ref('')
 const description = ref('')
 const creating = ref(false)
 const error = ref('')
+
+const personas = ref([])
+const selectedPersonaId = ref(null)
+const loadingPersonas = ref(true)
+
+onMounted(async () => {
+  try {
+    const result = await getPersonas()
+    personas.value = result.personas || result || []
+  } catch (e) {
+    console.error('Failed to load personas:', e)
+  } finally {
+    loadingPersonas.value = false
+  }
+})
+
+const selectedPersona = ref(null)
+function updateSelectedPersona() {
+  if (selectedPersonaId.value === null) {
+    selectedPersona.value = null
+  } else {
+    selectedPersona.value = personas.value.find(p => p.persona_id === selectedPersonaId.value)
+  }
+}
 
 const itemId = ref(null)
 const selectedFile = ref(null)
@@ -162,7 +211,7 @@ async function doCreateItem() {
   error.value = ''
   
   try {
-    const result = await createItem(mediaType.value, title.value, description.value)
+    const result = await createItem(mediaType.value, title.value, description.value, selectedPersonaId.value)
     itemId.value = result.item_id
   } catch (e) {
     error.value = e.message

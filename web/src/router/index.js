@@ -4,6 +4,7 @@ import UploadView from '../views/UploadView.vue'
 import LibraryView from '../views/LibraryView.vue'
 import ItemView from '../views/ItemView.vue'
 import ShortsView from '../views/ShortsView.vue'
+import PersonasView from '../views/PersonasView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -32,6 +33,11 @@ const router = createRouter({
       path: '/shorts',
       name: 'shorts',
       component: ShortsView
+    },
+    {
+      path: '/personas',
+      name: 'personas',
+      component: PersonasView
     }
   ]
 })

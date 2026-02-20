@@ -72,9 +72,12 @@
               {{ item.processing_status }}
             </span>
           </div>
-          <p class="text-gray-400 mb-4">
-            {{ formatDate(item.created_at) }}
-          </p>
+          <div class="flex items-center gap-4 mb-4">
+            <PersonaBadge :display-name="getPersonaDisplayName(item)" />
+            <p class="text-gray-400">
+              {{ formatDate(item.created_at) }}
+            </p>
+          </div>
           <p v-if="item.description" class="text-gray-300">
             {{ item.description }}
           </p>
@@ -186,7 +189,8 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getItem, deleteItem, createClip, getItemClips } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName } from '../services/api'
+import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
