@@ -102,6 +102,30 @@ export async function deleteItem(id) {
   return res.json();
 }
 
+export async function updateItem(id, updates) {
+  const res = await fetch(`${API_BASE}/api/items/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to update item");
+  }
+  return res.json();
+}
+
+export async function reprocessItem(id) {
+  const res = await fetch(`${API_BASE}/api/items/${id}/reprocess`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to reprocess item");
+  }
+  return res.json();
+}
+
 export async function createClip(itemId, startMs, endMs) {
   const res = await fetch(`${API_BASE}/api/items/${itemId}/clip`, {
     method: "POST",

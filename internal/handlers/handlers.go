@@ -46,6 +46,11 @@ type CreateItemResponse struct {
 	UploadURL string `json:"upload_url"`
 }
 
+type UpdateItemRequest struct {
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
 type MediaItemResponse struct {
 	ID               string   `json:"id"`
 	UserID           uint     `json:"user_id"`
@@ -641,8 +646,8 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID stri
 		return
 	}
 
-	if item.UserID != user.ID {
-		http.Error(w, "Forbidden - only owner can delete", http.StatusForbidden)
+	if item.UserID != user.ID && user.Role != models.RoleAdmin {
+		http.Error(w, "Forbidden - only owner or admin can delete", http.StatusForbidden)
 		return
 	}
 
@@ -666,6 +671,121 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID stri
 		"status": "deleted",
 	}); err != nil {
 		logging.Error.Printf("Failed to encode delete response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if item.UserID != user.ID && user.Role != models.RoleAdmin {
+		http.Error(w, "Forbidden - only owner or admin can edit", http.StatusForbidden)
+		return
+	}
+
+	var req UpdateItemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			http.Error(w, "title cannot be empty", http.StatusBadRequest)
+			return
+		}
+		updates["title"] = title
+		item.Title = title
+	}
+	if req.Description != nil {
+		desc := strings.TrimSpace(*req.Description)
+		updates["description"] = desc
+		item.Description = desc
+	}
+	if len(updates) == 0 {
+		http.Error(w, "No fields to update", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.Model(&item).Updates(updates).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update item: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	itemMeta, err := meta.ReadItemMetaByID(h.mediaRoot, itemID)
+	if err == nil && itemMeta != nil {
+		itemMeta.Title = item.Title
+		itemMeta.Description = item.Description
+		if writeErr := meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta); writeErr != nil {
+			logging.Error.Printf("Failed to write item meta for %s: %v", itemID, writeErr)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "updated"}); err != nil {
+		logging.Error.Printf("Failed to encode update item response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) ReprocessItem(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if item.UserID != user.ID && user.Role != models.RoleAdmin {
+		http.Error(w, "Forbidden - only owner or admin can reprocess", http.StatusForbidden)
+		return
+	}
+
+	// Clear failed jobs for this item to avoid stale noise in status/error reporting.
+	_ = h.db.Where("payload_json LIKE ? AND status = ?", "%"+itemID+"%", models.JobStatusFailed).
+		Delete(&models.Job{}).Error
+
+	var err error
+	switch item.Type {
+	case models.MediaTypeVideo:
+		err = h.jobQueue.EnqueueVideoProcessing(itemID)
+	case models.MediaTypeAudio:
+		err = h.jobQueue.EnqueueAudioProcessing(itemID)
+	case models.MediaTypePhoto:
+		err = h.jobQueue.EnqueuePhotoProcessing(itemID)
+	default:
+		http.Error(w, "Unsupported media type for reprocess", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to enqueue reprocess: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "queued"}); err != nil {
+		logging.Error.Printf("Failed to encode reprocess response for %s: %v", itemID, err)
 	}
 }
 

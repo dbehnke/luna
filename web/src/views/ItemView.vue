@@ -4,13 +4,26 @@
       <router-link to="/library" class="text-gray-400 hover:text-white">
         ← Back to Library
       </router-link>
-      <button
-        v-if="item"
-        @click="confirmDelete"
-        class="text-red-400 hover:text-red-300"
-      >
-        Delete
-      </button>
+      <div v-if="item && canManageItem" class="flex items-center gap-3">
+        <button
+          @click="startEdit"
+          class="text-blue-300 hover:text-blue-200 text-sm"
+        >
+          Edit
+        </button>
+        <button
+          @click="triggerReprocess"
+          class="text-amber-300 hover:text-amber-200 text-sm"
+        >
+          Reprocess
+        </button>
+        <button
+          @click="confirmDelete"
+          class="text-red-400 hover:text-red-300 text-sm"
+        >
+          Delete
+        </button>
+      </div>
     </header>
 
     <main v-if="loading" class="text-center text-gray-400 py-8">
@@ -76,6 +89,35 @@
         </div>
 
         <div class="p-6">
+          <div v-if="editing" class="mb-5 bg-gray-900/60 border border-gray-700 rounded-lg p-4 space-y-3">
+            <h3 class="text-sm font-semibold text-gray-200">Edit Item</h3>
+            <input
+              v-model="editTitle"
+              type="text"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white"
+            />
+            <textarea
+              v-model="editDescription"
+              rows="3"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white resize-none"
+            />
+            <div class="flex gap-2">
+              <button
+                @click="saveEdit"
+                :disabled="savingEdit || !editTitle.trim()"
+                class="bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm"
+              >
+                Save
+              </button>
+              <button
+                @click="cancelEdit"
+                class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+
           <div class="flex items-center gap-3 mb-2">
             <h1 class="text-2xl font-bold text-white flex-1">
               {{ item.title || 'Untitled' }}
@@ -265,7 +307,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
@@ -284,10 +326,17 @@ const clipError = ref('')
 const videoElement = ref(null)
 const hlsPlayer = ref(null)
 let hlsModulePromise = null
+const editing = ref(false)
+const savingEdit = ref(false)
+const reprocessing = ref(false)
+const editTitle = ref('')
+const editDescription = ref('')
 
 const isOwner = computed(() => {
   return currentUser.value && item.value && currentUser.value.id === item.value.user_id
 })
+const isAdmin = computed(() => currentUser.value?.role === 'admin')
+const canManageItem = computed(() => isOwner.value || isAdmin.value)
 
 async function toggleFavorite() {
   if (!item.value) return
@@ -432,6 +481,50 @@ async function doDelete() {
   }
 }
 
+function startEdit() {
+  if (!item.value) return
+  editTitle.value = item.value.title || ''
+  editDescription.value = item.value.description || ''
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+  editTitle.value = ''
+  editDescription.value = ''
+}
+
+async function saveEdit() {
+  if (!item.value || !editTitle.value.trim()) return
+  savingEdit.value = true
+  try {
+    await updateItem(item.value.id, {
+      title: editTitle.value.trim(),
+      description: editDescription.value.trim(),
+    })
+    item.value.title = editTitle.value.trim()
+    item.value.description = editDescription.value.trim()
+    cancelEdit()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    savingEdit.value = false
+  }
+}
+
+async function triggerReprocess() {
+  if (!item.value || reprocessing.value) return
+  reprocessing.value = true
+  try {
+    await reprocessItem(item.value.id)
+    await loadItem()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    reprocessing.value = false
+  }
+}
+
 async function createNewClip() {
   clipError.value = ''
 
@@ -462,5 +555,4 @@ async function createNewClip() {
   }
 }
 
-onMounted(loadItem)
 </script>

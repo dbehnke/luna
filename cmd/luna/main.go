@@ -264,6 +264,12 @@ func serveCommand(cfg *config.Config) *cli.Command {
 						return
 					}
 
+					if r.Method == "POST" && strings.HasSuffix(id, "/reprocess") {
+						id = strings.TrimSuffix(id, "/reprocess")
+						h.ReprocessItem(w, r, id)
+						return
+					}
+
 					if r.Method == "POST" && strings.HasSuffix(id, "/restore") {
 						id = strings.TrimSuffix(id, "/restore")
 						h.RestoreItem(w, r, id)
@@ -302,6 +308,10 @@ func serveCommand(cfg *config.Config) *cli.Command {
 
 					if r.Method == "GET" {
 						h.GetItem(w, r, id)
+						return
+					}
+					if r.Method == "PATCH" || r.Method == "PUT" {
+						h.UpdateItem(w, r, id)
 						return
 					}
 
