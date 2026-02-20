@@ -1,9 +1,9 @@
 <template>
-  <div class="min-h-screen bg-[#07182c] flex flex-col h-screen overflow-hidden">
-    <router-link to="/" class="fixed top-4 left-4 z-50 bg-black/50 text-white px-4 py-2 rounded-lg">
+  <div class="min-h-screen bg-[#07182c] flex flex-col h-screen overflow-hidden relative">
+    <router-link to="/" class="absolute top-4 left-4 z-50 bg-black/50 text-white px-4 py-2 rounded-lg">
       ← Back
     </router-link>
-    <div class="fixed top-4 right-4 z-50 flex items-center gap-2 bg-black/50 p-1 rounded-lg">
+    <div class="absolute top-4 right-4 z-50 flex items-center gap-2 bg-black/50 p-1 rounded-lg">
       <button
         @click="viewMode = 'feed'"
         :class="[
