@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 
 	"luna/internal/id"
 	"luna/internal/meta"
@@ -15,10 +17,25 @@ import (
 
 type Processor struct {
 	mediaRoot string
+	webpOnce  sync.Once
+	hasWebP   bool
 }
 
 func NewProcessor(mediaRoot string) *Processor {
 	return &Processor{mediaRoot: mediaRoot}
+}
+
+func (p *Processor) supportsWebP() bool {
+	p.webpOnce.Do(func() {
+		out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").CombinedOutput()
+		if err != nil {
+			p.hasWebP = false
+			return
+		}
+		encoders := strings.ToLower(string(out))
+		p.hasWebP = strings.Contains(encoders, "libwebp") || strings.Contains(encoders, " webp")
+	})
+	return p.hasWebP
 }
 
 func (p *Processor) CheckFFmpeg() (bool, string) {
@@ -359,25 +376,39 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 	if assetsMeta == nil {
 		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
 	}
+	assetsMeta.Thumbnails = nil
+
+	useWebP := p.supportsWebP()
+	thumbExt := ".png"
+	format := "image2"
+	codecArgs := []string{"-c:v", "png"}
+	extraArgs := []string{}
+	if useWebP {
+		thumbExt = ".webp"
+		format = "webp"
+		codecArgs = nil
+		extraArgs = []string{"-lossless", "1"}
+	}
 
 	for i, pct := range percentages {
 		timestamp := duration * pct
-		outputPath := filepath.Join(thumbsDir, fmt.Sprintf("t_%04d.webp", i+1))
+		outputPath := filepath.Join(thumbsDir, fmt.Sprintf("t_%04d%s", i+1, thumbExt))
 
-		tmpOutput := outputPath + ".tmp.webp"
+		tmpOutput := outputPath + ".tmp" + thumbExt
 		defer func() { _ = os.Remove(tmpOutput) }()
 
-		cmd := exec.Command("ffmpeg",
+		args := []string{
 			"-y",
 			"-ss", fmt.Sprintf("%.2f", timestamp),
 			"-i", originalFile,
 			"-vframes", "1",
 			"-vf", "scale=480:-2",
-			"-f", "webp",
-			"-c:v", "libwebp",
-			"-lossless", "1",
-			tmpOutput,
-		)
+			"-f", format,
+		}
+		args = append(args, codecArgs...)
+		args = append(args, extraArgs...)
+		args = append(args, tmpOutput)
+		cmd := exec.Command("ffmpeg", args...)
 
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -391,7 +422,7 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 		}
 
 		assetsMeta.Thumbnails = append(assetsMeta.Thumbnails, meta.Thumbnail{
-			StoragePath: fmt.Sprintf("thumbs/t_%04d.webp", i+1),
+			StoragePath: fmt.Sprintf("thumbs/t_%04d%s", i+1, thumbExt),
 			Timestamp:   fmt.Sprintf("%.0f%%", pct*100),
 		})
 	}
@@ -672,22 +703,33 @@ func (p *Processor) ProcessPhoto(itemID string) error {
 		return fmt.Errorf("create photos dir: %w", err)
 	}
 
-	displayPath := filepath.Join(photosDir, "display.webp")
-	thumbPath := filepath.Join(photosDir, "thumb.webp")
+	useWebP := p.supportsWebP()
+	photoExt := ".png"
+	format := "image2"
+	codecArgs := []string{"-c:v", "png"}
+	if useWebP {
+		photoExt = ".webp"
+		format = "webp"
+		codecArgs = nil
+	}
+
+	displayPath := filepath.Join(photosDir, "display"+photoExt)
+	thumbPath := filepath.Join(photosDir, "thumb"+photoExt)
 
 	writeResized := func(outputPath string, size int) error {
-		tmpOutput := outputPath + ".tmp.webp"
+		tmpOutput := outputPath + ".tmp" + photoExt
 		defer func() { _ = os.Remove(tmpOutput) }()
 
-		cmd := exec.Command("ffmpeg",
+		args := []string{
 			"-y",
 			"-i", originalFile,
 			"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", size, size),
 			"-vframes", "1",
-			"-f", "webp",
-			"-c:v", "libwebp",
-			tmpOutput,
-		)
+			"-f", format,
+		}
+		args = append(args, codecArgs...)
+		args = append(args, tmpOutput)
+		cmd := exec.Command("ffmpeg", args...)
 
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -740,8 +782,8 @@ func (p *Processor) ProcessPhoto(itemID string) error {
 	}
 
 	upsertPhoto("original", "original/"+originalEntry, 0, 0)
-	upsertPhoto("display", "photos/display.webp", displayW, displayH)
-	upsertPhoto("thumb", "photos/thumb.webp", thumbW, thumbH)
+	upsertPhoto("display", "photos/display"+photoExt, displayW, displayH)
+	upsertPhoto("thumb", "photos/thumb"+photoExt, thumbW, thumbH)
 
 	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
 		return fmt.Errorf("write assets meta: %w", err)

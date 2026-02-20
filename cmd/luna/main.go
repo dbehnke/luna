@@ -1699,13 +1699,33 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 				}
 
 				if itemMeta.Type == models.MediaTypePhoto {
-					displayPath := filepath.Join(mediaRoot, "items", itemID, "photos", "display.webp")
-					thumbPath := filepath.Join(mediaRoot, "items", itemID, "photos", "thumb.webp")
-					if _, err := os.Stat(displayPath); os.IsNotExist(err) {
-						if _, err := jobQueue.Enqueue(models.JobTypePhotoThumb, models.JobStatusQueued, 60, jobs.PhotoThumbPayload{ItemID: itemID}); err == nil {
-							jobsEnqueued++
+					needPhotoJob := false
+					if assetsMeta == nil || len(assetsMeta.Photos) == 0 {
+						needPhotoJob = true
+					} else {
+						var displayPath, thumbPath string
+						for _, photo := range assetsMeta.Photos {
+							switch photo.Kind {
+							case "display":
+								displayPath = photo.StoragePath
+							case "thumb":
+								thumbPath = photo.StoragePath
+							}
 						}
-					} else if _, err := os.Stat(thumbPath); os.IsNotExist(err) {
+						if displayPath == "" || thumbPath == "" {
+							needPhotoJob = true
+						} else {
+							displayAbs := filepath.Join(mediaRoot, "items", itemID, displayPath)
+							thumbAbs := filepath.Join(mediaRoot, "items", itemID, thumbPath)
+							if _, err := os.Stat(displayAbs); os.IsNotExist(err) {
+								needPhotoJob = true
+							}
+							if _, err := os.Stat(thumbAbs); os.IsNotExist(err) {
+								needPhotoJob = true
+							}
+						}
+					}
+					if needPhotoJob {
 						if _, err := jobQueue.Enqueue(models.JobTypePhotoThumb, models.JobStatusQueued, 60, jobs.PhotoThumbPayload{ItemID: itemID}); err == nil {
 							jobsEnqueued++
 						}
