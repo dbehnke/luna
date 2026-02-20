@@ -35,6 +35,7 @@ import (
 	"luna/internal/video"
 
 	"github.com/urfave/cli/v3"
+	"gorm.io/gorm"
 )
 
 type itemIDKey string
@@ -415,6 +416,7 @@ func userCommand(cfg *config.Config) *cli.Command {
 			userDeactivateCommand(cfg),
 			userActivateCommand(cfg),
 			userPasswdCommand(cfg),
+			userPurgeCommand(cfg),
 		},
 	}
 }
@@ -702,6 +704,196 @@ func userPasswdCommand(cfg *config.Config) *cli.Command {
 			return nil
 		},
 	}
+}
+
+func userPurgeCommand(cfg *config.Config) *cli.Command {
+	var username string
+	var execute bool
+	var confirm string
+
+	return &cli.Command{
+		Name:  "purge",
+		Usage: "Permanently remove a user and all owned content (default: dry-run)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "username", Required: true, Destination: &username},
+			&cli.BoolFlag{Name: "execute", Destination: &execute},
+			&cli.StringFlag{Name: "confirm", Destination: &confirm},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			var user models.User
+			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+				return fmt.Errorf("find user %q: %w", username, err)
+			}
+
+			var itemIDs []string
+			if err := database.Unscoped().
+				Model(&models.MediaItem{}).
+				Where("user_id = ?", user.ID).
+				Pluck("id", &itemIDs).Error; err != nil {
+				return fmt.Errorf("list owned items: %w", err)
+			}
+
+			var personaCount int64
+			if err := database.Unscoped().Model(&models.Persona{}).Where("user_id = ?", user.ID).Count(&personaCount).Error; err != nil {
+				return fmt.Errorf("count personas: %w", err)
+			}
+
+			var mediaCount int64
+			if err := database.Unscoped().Model(&models.MediaItem{}).Where("user_id = ?", user.ID).Count(&mediaCount).Error; err != nil {
+				return fmt.Errorf("count media items: %w", err)
+			}
+
+			var sessionCount int64
+			if err := database.Model(&models.Session{}).Where("user_id = ?", user.ID).Count(&sessionCount).Error; err != nil {
+				return fmt.Errorf("count sessions: %w", err)
+			}
+
+			var ownReactionCount int64
+			if err := database.Model(&models.Reaction{}).Where("user_id = ?", user.ID).Count(&ownReactionCount).Error; err != nil {
+				return fmt.Errorf("count user reactions: %w", err)
+			}
+
+			var ownFavoriteCount int64
+			if err := database.Model(&models.Favorite{}).Where("user_id = ?", user.ID).Count(&ownFavoriteCount).Error; err != nil {
+				return fmt.Errorf("count user favorites: %w", err)
+			}
+
+			var assetReactionCount int64
+			var assetFavoriteCount int64
+			var clipCount int64
+			if len(itemIDs) > 0 {
+				if err := database.Model(&models.Reaction{}).Where("item_id IN ?", itemIDs).Count(&assetReactionCount).Error; err != nil {
+					return fmt.Errorf("count item reactions: %w", err)
+				}
+				if err := database.Model(&models.Favorite{}).Where("item_id IN ?", itemIDs).Count(&assetFavoriteCount).Error; err != nil {
+					return fmt.Errorf("count item favorites: %w", err)
+				}
+				if err := database.Model(&models.ClipAsset{}).Where("item_id IN ?", itemIDs).Count(&clipCount).Error; err != nil {
+					return fmt.Errorf("count clip assets: %w", err)
+				}
+			}
+
+			var bytesTotal int64
+			for _, itemID := range itemIDs {
+				size, err := dirSize(filepath.Join(cfg.MediaRoot, "items", itemID))
+				if err != nil {
+					return fmt.Errorf("measure item %s: %w", itemID, err)
+				}
+				bytesTotal += size
+			}
+
+			fmt.Printf("Purge summary for user %q (id=%d)\n", user.Username, user.ID)
+			fmt.Printf("  personas: %d\n", personaCount)
+			fmt.Printf("  media_items: %d\n", mediaCount)
+			fmt.Printf("  clip_assets: %d\n", clipCount)
+			fmt.Printf("  sessions: %d\n", sessionCount)
+			fmt.Printf("  reactions_by_user: %d\n", ownReactionCount)
+			fmt.Printf("  favorites_by_user: %d\n", ownFavoriteCount)
+			fmt.Printf("  reactions_on_user_items: %d\n", assetReactionCount)
+			fmt.Printf("  favorites_on_user_items: %d\n", assetFavoriteCount)
+			fmt.Printf("  estimated_item_bytes: %d\n", bytesTotal)
+
+			if !execute {
+				fmt.Println("Dry-run only. Re-run with --execute --confirm <username> to apply purge.")
+				return nil
+			}
+			if strings.TrimSpace(confirm) != user.Username {
+				return fmt.Errorf("confirmation mismatch: set --confirm %s", user.Username)
+			}
+
+			if user.Role == models.RoleAdmin && user.IsActive {
+				adminCount, err := useradmin.CountActiveAdmins(database.DB)
+				if err != nil {
+					return fmt.Errorf("count active admins: %w", err)
+				}
+				if adminCount <= 1 {
+					return fmt.Errorf("cannot purge the last active admin")
+				}
+			}
+
+			if err := database.Transaction(func(tx *gorm.DB) error {
+				if len(itemIDs) > 0 {
+					if err := tx.Where("item_id IN ?", itemIDs).Delete(&models.Reaction{}).Error; err != nil {
+						return err
+					}
+					if err := tx.Where("item_id IN ?", itemIDs).Delete(&models.Favorite{}).Error; err != nil {
+						return err
+					}
+					if err := tx.Unscoped().Where("item_id IN ?", itemIDs).Delete(&models.ClipAsset{}).Error; err != nil {
+						return err
+					}
+					if err := tx.Unscoped().Where("id IN ?", itemIDs).Delete(&models.MediaItem{}).Error; err != nil {
+						return err
+					}
+				}
+
+				if err := tx.Where("user_id = ?", user.ID).Delete(&models.Reaction{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("user_id = ?", user.ID).Delete(&models.Favorite{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("user_id = ?", user.ID).Delete(&models.Session{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Unscoped().Where("user_id = ?", user.ID).Delete(&models.Persona{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Unscoped().Delete(&models.User{}, user.ID).Error; err != nil {
+					return err
+				}
+				return nil
+			}); err != nil {
+				return fmt.Errorf("purge user records: %w", err)
+			}
+
+			for _, itemID := range itemIDs {
+				itemDir := filepath.Join(cfg.MediaRoot, "items", itemID)
+				if err := os.RemoveAll(itemDir); err != nil {
+					return fmt.Errorf("remove item directory %s: %w", itemDir, err)
+				}
+			}
+
+			userAvatarDir := filepath.Join(cfg.MediaRoot, "avatars", "users", fmt.Sprintf("%d", user.ID))
+			if err := os.RemoveAll(userAvatarDir); err != nil {
+				return fmt.Errorf("remove avatar directory %s: %w", userAvatarDir, err)
+			}
+
+			fmt.Printf("Purged user %q and owned content.\n", user.Username)
+			return nil
+		},
+	}
+}
+
+func dirSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return statErr
+		}
+		total += info.Size()
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	return total, err
 }
 
 func workerCommand(cfg *config.Config) *cli.Command {
