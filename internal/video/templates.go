@@ -112,13 +112,18 @@ func ClipTranscodeArgs(inPath string, outPath string, probe ProbeResult, startMs
 	startSec := float64(startMs) / 1000.0
 	durationMs := endMs - startMs
 	durationSec := float64(durationMs) / 1000.0
+	// Center-crop to 9:16 without exceeding source bounds:
+	// - If input is wider than 9:16, crop width to ih*9/16 and keep full height.
+	// - If input is narrower than 9:16, keep full width and crop height to iw*16/9.
+	// Then center both axes and scale to target shorts resolution.
+	cropFilter := "crop=if(gte(iw/ih\\,9/16)\\,ih*9/16\\,iw):if(gte(iw/ih\\,9/16)\\,ih\\,iw*16/9):(iw-ow)/2:(ih-oh)/2"
 
 	args := []string{
 		"-y",
 		"-ss", fmt.Sprintf("%.3f", startSec),
 		"-t", fmt.Sprintf("%.3f", durationSec),
 		"-i", inPath,
-		"-vf", fmt.Sprintf("crop=ih*(9/16):ih*(9/16):(iw-iw*(9/16))/2:0,scale=%d:%d", ClipWidth, ClipHeight),
+		"-vf", fmt.Sprintf("%s,scale=%d:%d", cropFilter, ClipWidth, ClipHeight),
 		"-c:v", "libx264",
 		"-preset", "medium",
 		"-crf", "23",
