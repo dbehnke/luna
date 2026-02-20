@@ -126,6 +126,19 @@ export async function reprocessItem(id) {
   return res.json();
 }
 
+export async function setItemThumbnail(itemId, timestampMs) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/thumbnail`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ timestamp_ms: timestampMs }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to set thumbnail");
+  }
+  return res.json();
+}
+
 export async function createClip(itemId, startMs, endMs) {
   const res = await fetch(`${API_BASE}/api/items/${itemId}/clip`, {
     method: "POST",

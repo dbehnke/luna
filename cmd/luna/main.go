@@ -270,6 +270,12 @@ func serveCommand(cfg *config.Config) *cli.Command {
 						return
 					}
 
+					if r.Method == "POST" && strings.HasSuffix(id, "/thumbnail") {
+						id = strings.TrimSuffix(id, "/thumbnail")
+						h.SetItemThumbnail(w, r, id)
+						return
+					}
+
 					if r.Method == "POST" && strings.HasSuffix(id, "/restore") {
 						id = strings.TrimSuffix(id, "/restore")
 						h.RestoreItem(w, r, id)

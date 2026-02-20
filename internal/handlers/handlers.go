@@ -20,6 +20,7 @@ import (
 	"luna/internal/models"
 	"luna/internal/storage"
 	"luna/internal/useradmin"
+	"luna/internal/video"
 
 	"gorm.io/gorm"
 )
@@ -803,6 +804,10 @@ type CreateClipResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
+type SetThumbnailRequest struct {
+	TimestampMs int64 `json:"timestamp_ms"`
+}
+
 func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID string) {
 	user := auth.GetUser(r.Context())
 	if user == nil {
@@ -919,6 +924,80 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 		Status: "queued",
 	}); err != nil {
 		logging.Error.Printf("Failed to encode create clip response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) SetItemThumbnail(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if item.Type != models.MediaTypeVideo {
+		http.Error(w, "Thumbnails can only be set for videos", http.StatusBadRequest)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can set thumbnail", http.StatusForbidden)
+		return
+	}
+
+	var req SetThumbnailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.TimestampMs < 0 {
+		http.Error(w, "timestamp_ms must be >= 0", http.StatusBadRequest)
+		return
+	}
+
+	processor := video.NewProcessor(h.mediaRoot)
+	thumb, err := processor.SetThumbnailAt(itemID, float64(req.TimestampMs)/1000.0)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to generate thumbnail: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(h.mediaRoot, itemID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read assets meta: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if assetsMeta == nil {
+		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
+	}
+
+	newThumbs := []meta.Thumbnail{thumb}
+	for _, existing := range assetsMeta.Thumbnails {
+		if existing.StoragePath == thumb.StoragePath {
+			continue
+		}
+		newThumbs = append(newThumbs, existing)
+	}
+	assetsMeta.Thumbnails = newThumbs
+
+	if err := meta.WriteAssetsMetaAtomic(h.mediaRoot, itemID, assetsMeta); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write assets meta: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"status":    "updated",
+		"thumb_url": "/media/" + itemID + "/" + thumb.StoragePath,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode set thumbnail response for %s: %v", itemID, err)
 	}
 }
 

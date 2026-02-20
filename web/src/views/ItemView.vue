@@ -188,6 +188,15 @@
             >
               Optimizing stream...
             </span>
+            <button
+              v-if="item.type === 'video' && canManageItem && (item.master_url || item.media_url)"
+              @click="setCurrentFrameAsThumbnail"
+              :disabled="settingThumbnail"
+              class="px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-gray-600"
+              title="Set thumbnail from current playback time"
+            >
+              {{ settingThumbnail ? 'Saving...' : 'Set Thumbnail' }}
+            </button>
           </div>
           <div class="flex items-center gap-4 mb-4">
             <PersonaBadge :display-name="getPersonaDisplayName(item)" :avatar-url="getPersonaAvatarUrl(item)" :slug="getPersonaSlug(item)" />
@@ -195,6 +204,9 @@
               {{ formatDate(item.created_at) }}
             </p>
           </div>
+          <p v-if="thumbnailMessage" class="text-emerald-300 text-sm mb-3">
+            {{ thumbnailMessage }}
+          </p>
           <p v-if="item.description" class="text-gray-300">
             {{ item.description }}
           </p>
@@ -315,7 +327,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getItem, deleteItem, createClip, getItemClips, deleteClip, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, deleteClip, setItemThumbnail, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
@@ -342,6 +354,8 @@ const editing = ref(false)
 const savingEdit = ref(false)
 const reprocessing = ref(false)
 const deletingClipId = ref('')
+const settingThumbnail = ref(false)
+const thumbnailMessage = ref('')
 const editTitle = ref('')
 const editDescription = ref('')
 
@@ -531,6 +545,7 @@ async function loadItem(options = {}) {
   if (!silent) {
     loading.value = true
     error.value = ''
+    thumbnailMessage.value = ''
   }
 
   try {
@@ -696,6 +711,28 @@ function previewClipLeave(event) {
   if (!(video instanceof HTMLVideoElement)) return
   video.pause()
   video.currentTime = 0
+}
+
+async function setCurrentFrameAsThumbnail() {
+  if (!item.value || !canManageItem.value || !videoElement.value || settingThumbnail.value) return
+
+  const video = videoElement.value
+  const timestampMs = Math.max(0, Math.floor((video.currentTime || 0) * 1000))
+  settingThumbnail.value = true
+  thumbnailMessage.value = ''
+  error.value = ''
+
+  try {
+    const result = await setItemThumbnail(item.value.id, timestampMs)
+    if (result?.thumb_url) {
+      item.value.thumb_urls = [result.thumb_url]
+    }
+    thumbnailMessage.value = `Thumbnail updated at ${Math.floor(timestampMs / 1000)}s`
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    settingThumbnail.value = false
+  }
 }
 
 </script>

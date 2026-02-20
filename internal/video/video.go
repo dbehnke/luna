@@ -434,6 +434,83 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 	return nil
 }
 
+// SetThumbnailAt generates/replaces the primary thumbnail (t_0001) at a specific timestamp.
+// It prefers derived/master.mp4 when available, and falls back to original upload.
+func (p *Processor) SetThumbnailAt(itemID string, timestampSec float64) (meta.Thumbnail, error) {
+	if timestampSec < 0 {
+		return meta.Thumbnail{}, fmt.Errorf("invalid timestamp: %f", timestampSec)
+	}
+
+	thumbsDir := filepath.Join(p.mediaRoot, "items", itemID, "thumbs")
+	if err := os.MkdirAll(thumbsDir, 0755); err != nil {
+		return meta.Thumbnail{}, fmt.Errorf("create thumbs dir: %w", err)
+	}
+
+	inputPath := filepath.Join(p.mediaRoot, "items", itemID, "derived", "master.mp4")
+	if _, err := os.Stat(inputPath); err != nil {
+		originalDir := filepath.Join(p.mediaRoot, "items", itemID, "original")
+		entries, readErr := os.ReadDir(originalDir)
+		if readErr != nil {
+			return meta.Thumbnail{}, fmt.Errorf("read original dir: %w", readErr)
+		}
+
+		inputPath = ""
+		for _, e := range entries {
+			if !e.IsDir() {
+				inputPath = filepath.Join(originalDir, e.Name())
+				break
+			}
+		}
+		if inputPath == "" {
+			return meta.Thumbnail{}, fmt.Errorf("no source file found")
+		}
+	}
+
+	useWebP := p.supportsWebP()
+	thumbExt := ".png"
+	format := "image2"
+	codecArgs := []string{"-c:v", "png"}
+	extraArgs := []string{}
+	if useWebP {
+		thumbExt = ".webp"
+		format = "webp"
+		codecArgs = nil
+		extraArgs = []string{"-lossless", "1"}
+	}
+
+	outputPath := filepath.Join(thumbsDir, "t_0001"+thumbExt)
+	tmpOutput := outputPath + ".tmp" + thumbExt
+	defer func() { _ = os.Remove(tmpOutput) }()
+
+	args := []string{
+		"-y",
+		"-ss", fmt.Sprintf("%.3f", timestampSec),
+		"-i", inputPath,
+		"-vframes", "1",
+		"-vf", "scale=480:-2",
+		"-f", format,
+	}
+	args = append(args, codecArgs...)
+	args = append(args, extraArgs...)
+	args = append(args, tmpOutput)
+	cmd := exec.Command("ffmpeg", args...)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return meta.Thumbnail{}, fmt.Errorf("ffmpeg set thumb failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return meta.Thumbnail{}, fmt.Errorf("rename thumb: %w", err)
+	}
+
+	return meta.Thumbnail{
+		StoragePath: "thumbs/t_0001" + thumbExt,
+		Timestamp:   fmt.Sprintf("%.3fs", timestampSec),
+	}, nil
+}
+
 func (p *Processor) ProcessProbe(itemID string) error {
 	probe, err := p.Probe(itemID)
 	if err != nil {
