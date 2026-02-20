@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"luna/internal/auth"
@@ -30,6 +31,7 @@ import (
 	"luna/internal/restore"
 	"luna/internal/snapshot"
 	"luna/internal/storage"
+	"luna/internal/useradmin"
 	"luna/internal/video"
 
 	"github.com/urfave/cli/v3"
@@ -67,6 +69,7 @@ func main() {
 			workerCommand(cfg),
 			importCommand(cfg),
 			rebuildDBCommand(cfg),
+			userCommand(cfg),
 			doctorCommand(cfg),
 			reconcileCommand(cfg),
 			snapshotCommand(cfg),
@@ -344,6 +347,318 @@ func findAvailablePort(addr string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no available ports found after %d attempts", maxAttempts)
+}
+
+func openDBAndMigrate(cfg *config.Config) (*db.DB, error) {
+	database, err := db.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+	if err := database.AutoMigrate(); err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+	return database, nil
+}
+
+func userCommand(cfg *config.Config) *cli.Command {
+	return &cli.Command{
+		Name:  "user",
+		Usage: "Manage local users",
+		Commands: []*cli.Command{
+			userCreateCommand(cfg),
+			userListCommand(cfg),
+			userSetRoleCommand(cfg),
+			userDeactivateCommand(cfg),
+			userActivateCommand(cfg),
+			userPasswdCommand(cfg),
+		},
+	}
+}
+
+func userCreateCommand(cfg *config.Config) *cli.Command {
+	var username string
+	var password string
+	var role string
+
+	return &cli.Command{
+		Name:  "create",
+		Usage: "Create a user",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "username", Required: true, Destination: &username},
+			&cli.StringFlag{Name: "password", Required: true, Destination: &password},
+			&cli.StringFlag{Name: "role", Value: models.RoleUser, Destination: &role},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			normalizedRole, err := useradmin.NormalizeRole(role)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(username) == "" {
+				return fmt.Errorf("username is required")
+			}
+			if strings.TrimSpace(password) == "" {
+				return fmt.Errorf("password is required")
+			}
+
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			var existing models.User
+			if err := database.Where("username = ?", username).First(&existing).Error; err == nil {
+				return fmt.Errorf("user %q already exists", username)
+			}
+
+			passwordHash, err := auth.HashPassword(password)
+			if err != nil {
+				return fmt.Errorf("hash password: %w", err)
+			}
+
+			user := models.User{
+				Username:     username,
+				PasswordHash: passwordHash,
+				Role:         normalizedRole,
+				IsActive:     true,
+			}
+			if err := database.Create(&user).Error; err != nil {
+				return fmt.Errorf("create user: %w", err)
+			}
+
+			logging.Info.Printf("Created user %q with role %q", user.Username, user.Role)
+			return nil
+		},
+	}
+}
+
+func userListCommand(cfg *config.Config) *cli.Command {
+	var showAll bool
+	var showActive bool
+	var showInactive bool
+
+	return &cli.Command{
+		Name:  "list",
+		Usage: "List users",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "all", Destination: &showAll},
+			&cli.BoolFlag{Name: "active", Destination: &showActive},
+			&cli.BoolFlag{Name: "inactive", Destination: &showInactive},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if (showAll && showActive) || (showAll && showInactive) || (showActive && showInactive) {
+				return fmt.Errorf("use at most one of --all, --active, --inactive")
+			}
+
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			query := database.Model(&models.User{})
+			if showActive {
+				query = query.Where("is_active = ?", true)
+			}
+			if showInactive {
+				query = query.Where("is_active = ?", false)
+			}
+
+			var users []models.User
+			if err := query.Order("id ASC").Find(&users).Error; err != nil {
+				return fmt.Errorf("list users: %w", err)
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tUSERNAME\tROLE\tSTATUS\tCREATED")
+			for _, user := range users {
+				status := "active"
+				if !user.IsActive {
+					status = "inactive"
+				}
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n",
+					user.ID,
+					user.Username,
+					user.Role,
+					status,
+					user.CreatedAt.UTC().Format(time.RFC3339),
+				)
+			}
+			_ = w.Flush()
+			return nil
+		},
+	}
+}
+
+func userSetRoleCommand(cfg *config.Config) *cli.Command {
+	var username string
+	var role string
+
+	return &cli.Command{
+		Name:  "set-role",
+		Usage: "Set a user's role",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "username", Required: true, Destination: &username},
+			&cli.StringFlag{Name: "role", Required: true, Destination: &role},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			normalizedRole, err := useradmin.NormalizeRole(role)
+			if err != nil {
+				return err
+			}
+
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			var user models.User
+			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+				return fmt.Errorf("find user %q: %w", username, err)
+			}
+			if user.Role == normalizedRole {
+				logging.Info.Printf("User %q already has role %q", username, normalizedRole)
+				return nil
+			}
+			if err := useradmin.EnsureCanChangeRole(database.DB, user, normalizedRole); err != nil {
+				return err
+			}
+
+			if err := database.Model(&user).Update("role", normalizedRole).Error; err != nil {
+				return fmt.Errorf("update role: %w", err)
+			}
+			logging.Info.Printf("Updated user %q role to %q", username, normalizedRole)
+			return nil
+		},
+	}
+}
+
+func userDeactivateCommand(cfg *config.Config) *cli.Command {
+	var username string
+	var reason string
+
+	return &cli.Command{
+		Name:  "deactivate",
+		Usage: "Deactivate a user without deleting content",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "username", Required: true, Destination: &username},
+			&cli.StringFlag{Name: "reason", Destination: &reason},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			var user models.User
+			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+				return fmt.Errorf("find user %q: %w", username, err)
+			}
+			if !user.IsActive {
+				logging.Info.Printf("User %q is already inactive", username)
+				return nil
+			}
+			if err := useradmin.EnsureCanDeactivate(database.DB, user); err != nil {
+				return err
+			}
+
+			now := time.Now().UTC()
+			updates := map[string]interface{}{
+				"is_active":      false,
+				"deactivated_at": now,
+			}
+			if err := database.Model(&user).Updates(updates).Error; err != nil {
+				return fmt.Errorf("deactivate user: %w", err)
+			}
+			if strings.TrimSpace(reason) != "" {
+				logging.Info.Printf("Deactivated user %q (reason: %s)", username, reason)
+				return nil
+			}
+			logging.Info.Printf("Deactivated user %q", username)
+			return nil
+		},
+	}
+}
+
+func userActivateCommand(cfg *config.Config) *cli.Command {
+	var username string
+
+	return &cli.Command{
+		Name:  "activate",
+		Usage: "Activate a deactivated user",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "username", Required: true, Destination: &username},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			var user models.User
+			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+				return fmt.Errorf("find user %q: %w", username, err)
+			}
+			if user.IsActive {
+				logging.Info.Printf("User %q is already active", username)
+				return nil
+			}
+
+			updates := map[string]interface{}{
+				"is_active":      true,
+				"deactivated_at": nil,
+			}
+			if err := database.Model(&user).Updates(updates).Error; err != nil {
+				return fmt.Errorf("activate user: %w", err)
+			}
+			logging.Info.Printf("Activated user %q", username)
+			return nil
+		},
+	}
+}
+
+func userPasswdCommand(cfg *config.Config) *cli.Command {
+	var username string
+	var password string
+
+	return &cli.Command{
+		Name:  "passwd",
+		Usage: "Set a user's password",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "username", Required: true, Destination: &username},
+			&cli.StringFlag{Name: "password", Required: true, Destination: &password},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if strings.TrimSpace(password) == "" {
+				return fmt.Errorf("password is required")
+			}
+
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			var user models.User
+			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+				return fmt.Errorf("find user %q: %w", username, err)
+			}
+
+			passwordHash, err := auth.HashPassword(password)
+			if err != nil {
+				return fmt.Errorf("hash password: %w", err)
+			}
+			if err := database.Model(&user).Update("password_hash", passwordHash).Error; err != nil {
+				return fmt.Errorf("update password: %w", err)
+			}
+			logging.Info.Printf("Updated password for user %q", username)
+			return nil
+		},
+	}
 }
 
 func workerCommand(cfg *config.Config) *cli.Command {
