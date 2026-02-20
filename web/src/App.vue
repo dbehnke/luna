@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen">
+  <div :class="['min-h-screen', contentNeedsTopOffset ? 'pt-16' : '']">
     <div
       v-if="showSessionActions"
       class="fixed top-3 right-3 z-50 flex items-center gap-2"
@@ -35,6 +35,9 @@ const loggingOut = ref(false);
 
 const showSessionActions = computed(
   () => !!user.value && route.name !== "login",
+);
+const contentNeedsTopOffset = computed(
+  () => showSessionActions.value && route.name !== "shorts",
 );
 
 async function refreshUser() {
