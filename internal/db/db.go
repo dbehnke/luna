@@ -45,6 +45,8 @@ func (d *DB) AutoMigrate() error {
 		&models.ClipAsset{},
 		&models.Reaction{},
 		&models.Favorite{},
+		&models.Playlist{},
+		&models.PlaylistItem{},
 		&models.SchemaVersion{},
 	); err != nil {
 		return err

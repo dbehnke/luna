@@ -199,6 +199,55 @@ func serveCommand(cfg *config.Config) *cli.Command {
 					return
 				}
 
+				if path == "/api/playlists" {
+					if r.Method == "GET" {
+						h.ListPlaylists(w, r)
+						return
+					}
+					if r.Method == "POST" {
+						h.CreatePlaylist(w, r)
+						return
+					}
+				}
+
+				if strings.HasPrefix(path, "/api/playlists/") {
+					remainder := strings.TrimPrefix(path, "/api/playlists/")
+					parts := strings.Split(remainder, "/")
+					if len(parts) >= 1 && parts[0] != "" {
+						playlistID := parts[0]
+
+						if len(parts) == 1 {
+							if r.Method == "GET" {
+								h.GetPlaylist(w, r, playlistID)
+								return
+							}
+							if r.Method == "PATCH" || r.Method == "PUT" {
+								h.UpdatePlaylist(w, r, playlistID)
+								return
+							}
+							if r.Method == "DELETE" {
+								h.DeletePlaylist(w, r, playlistID)
+								return
+							}
+						}
+
+						if len(parts) == 2 && parts[1] == "items" && r.Method == "POST" {
+							h.AddPlaylistItem(w, r, playlistID)
+							return
+						}
+
+						if len(parts) == 3 && parts[1] == "items" && r.Method == "DELETE" {
+							h.RemovePlaylistItem(w, r, playlistID, parts[2])
+							return
+						}
+
+						if len(parts) == 2 && parts[1] == "reorder" && r.Method == "POST" {
+							h.ReorderPlaylistItems(w, r, playlistID)
+							return
+						}
+					}
+				}
+
 				if strings.HasPrefix(path, "/api/items/") {
 					id := strings.TrimPrefix(path, "/api/items/")
 
@@ -757,6 +806,21 @@ func userPurgeCommand(cfg *config.Config) *cli.Command {
 				return fmt.Errorf("count user favorites: %w", err)
 			}
 
+			var playlistCount int64
+			if err := database.Model(&models.Playlist{}).Where("user_id = ?", user.ID).Count(&playlistCount).Error; err != nil {
+				return fmt.Errorf("count playlists: %w", err)
+			}
+
+			var playlistItemCount int64
+			if playlistCount > 0 {
+				if err := database.Model(&models.PlaylistItem{}).
+					Joins("JOIN playlists ON playlists.id = playlist_items.playlist_id").
+					Where("playlists.user_id = ?", user.ID).
+					Count(&playlistItemCount).Error; err != nil {
+					return fmt.Errorf("count playlist items: %w", err)
+				}
+			}
+
 			var assetReactionCount int64
 			var assetFavoriteCount int64
 			var clipCount int64
@@ -788,6 +852,8 @@ func userPurgeCommand(cfg *config.Config) *cli.Command {
 			fmt.Printf("  sessions: %d\n", sessionCount)
 			fmt.Printf("  reactions_by_user: %d\n", ownReactionCount)
 			fmt.Printf("  favorites_by_user: %d\n", ownFavoriteCount)
+			fmt.Printf("  playlists: %d\n", playlistCount)
+			fmt.Printf("  playlist_items: %d\n", playlistItemCount)
 			fmt.Printf("  reactions_on_user_items: %d\n", assetReactionCount)
 			fmt.Printf("  favorites_on_user_items: %d\n", assetFavoriteCount)
 			fmt.Printf("  estimated_item_bytes: %d\n", bytesTotal)
@@ -831,6 +897,18 @@ func userPurgeCommand(cfg *config.Config) *cli.Command {
 				}
 				if err := tx.Where("user_id = ?", user.ID).Delete(&models.Favorite{}).Error; err != nil {
 					return err
+				}
+				var playlistIDs []uint
+				if err := tx.Model(&models.Playlist{}).Where("user_id = ?", user.ID).Pluck("id", &playlistIDs).Error; err != nil {
+					return err
+				}
+				if len(playlistIDs) > 0 {
+					if err := tx.Where("playlist_id IN ?", playlistIDs).Delete(&models.PlaylistItem{}).Error; err != nil {
+						return err
+					}
+					if err := tx.Where("id IN ?", playlistIDs).Delete(&models.Playlist{}).Error; err != nil {
+						return err
+					}
 				}
 				if err := tx.Where("user_id = ?", user.ID).Delete(&models.Session{}).Error; err != nil {
 					return err
@@ -1273,6 +1351,8 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 				&models.ClipAsset{},
 				&models.Reaction{},
 				&models.Favorite{},
+				&models.PlaylistItem{},
+				&models.Playlist{},
 			); err != nil {
 				return fmt.Errorf("drop tables: %w", err)
 			}
@@ -1286,6 +1366,8 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 				&models.ClipAsset{},
 				&models.Reaction{},
 				&models.Favorite{},
+				&models.Playlist{},
+				&models.PlaylistItem{},
 			); err != nil {
 				return fmt.Errorf("run migrations: %w", err)
 			}

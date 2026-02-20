@@ -161,6 +161,26 @@ type Favorite struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Playlist represents a user-owned ordered media collection.
+type Playlist struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	UserID    uint           `gorm:"index;not null" json:"user_id"`
+	Name      string         `gorm:"size:255;not null" json:"name"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// PlaylistItem represents one media item inside a playlist at a stable position.
+type PlaylistItem struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	PlaylistID uint      `gorm:"uniqueIndex:idx_playlist_item;index;not null" json:"playlist_id"`
+	ItemID     string    `gorm:"uniqueIndex:idx_playlist_item;index;not null;size:26" json:"item_id"`
+	Position   int       `gorm:"index;not null" json:"position"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // SchemaVersion stores the current schema version for migrations
 type SchemaVersion struct {
 	Key   string `gorm:"primaryKey;size:100" json:"key"`
