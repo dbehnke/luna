@@ -25,22 +25,25 @@
       class="hidden md:flex fixed left-0 top-0 bottom-0 z-40 bg-[#05152a] border-r border-[#123255] flex-col py-4 transition-all duration-200"
       :class="sidebarPinned ? 'w-56 px-3 items-stretch' : 'w-20 items-center'"
     >
-      <div class="w-full flex items-center" :class="sidebarPinned ? 'justify-between gap-2 px-1 mb-3' : 'justify-center mb-4'">
+      <div
+        class="w-full"
+        :class="sidebarPinned ? 'flex flex-col items-stretch gap-2 px-1 mb-3' : 'flex items-center justify-center mb-4'"
+      >
         <router-link
           to="/"
           class="text-white flex items-center"
-          :class="sidebarPinned ? 'px-1 flex-1 justify-start h-14' : 'h-12 w-12 rounded-xl bg-[#0a2540] justify-center'"
+          :class="sidebarPinned ? 'px-2 h-20 justify-start' : 'h-12 w-12 rounded-xl bg-[#0a2540] justify-center'"
           title="Home"
         >
           <img
             :src="sidebarPinned ? lunaLogoFull : lunaMark"
             alt="Luna"
-            :class="sidebarPinned ? 'h-12 w-auto object-contain' : 'w-7 h-7 shrink-0'"
+            :class="sidebarPinned ? 'h-auto w-44 max-w-full object-contain' : 'w-7 h-7 shrink-0'"
           />
         </router-link>
         <button
           class="h-12 rounded-xl bg-[#0a2540] text-gray-200 hover:bg-[#12365d] flex items-center justify-center"
-          :class="sidebarPinned ? 'w-12' : 'hidden'"
+          :class="sidebarPinned ? 'w-12 self-end' : 'hidden'"
           @click="toggleSidebarPin"
           title="Collapse sidebar"
         >
