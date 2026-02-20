@@ -643,3 +643,144 @@ func (p *Processor) ProcessHLS(itemID string) error {
 
 	return nil
 }
+
+func (p *Processor) ProcessPhoto(itemID string) error {
+	inputPath := filepath.Join(p.mediaRoot, "items", itemID, "original")
+	entries, err := os.ReadDir(inputPath)
+	if err != nil {
+		return fmt.Errorf("read original dir: %w", err)
+	}
+
+	var originalEntry string
+	var originalFile string
+	for _, e := range entries {
+		if !e.IsDir() {
+			originalEntry = e.Name()
+			originalFile = filepath.Join(inputPath, e.Name())
+			break
+		}
+	}
+
+	if originalFile == "" {
+		return fmt.Errorf("no original file found")
+	}
+
+	photosDir := filepath.Join(p.mediaRoot, "items", itemID, "photos")
+	if err := os.MkdirAll(photosDir, 0755); err != nil {
+		return fmt.Errorf("create photos dir: %w", err)
+	}
+
+	displayPath := filepath.Join(photosDir, "display.webp")
+	thumbPath := filepath.Join(photosDir, "thumb.webp")
+
+	writeResized := func(outputPath string, size int) error {
+		tmpOutput := outputPath + ".tmp"
+		defer os.Remove(tmpOutput)
+
+		cmd := exec.Command("ffmpeg",
+			"-y",
+			"-i", originalFile,
+			"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", size, size),
+			"-vframes", "1",
+			tmpOutput,
+		)
+
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ffmpeg photo resize failed: %w, stderr: %s", err, stderr.String())
+		}
+
+		if err := os.Rename(tmpOutput, outputPath); err != nil {
+			return fmt.Errorf("rename photo output: %w", err)
+		}
+		return nil
+	}
+
+	if err := writeResized(displayPath, 2048); err != nil {
+		return err
+	}
+	if err := writeResized(thumbPath, 480); err != nil {
+		return err
+	}
+
+	displayW, displayH := probeImageDimensions(displayPath)
+	thumbW, thumbH := probeImageDimensions(thumbPath)
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read assets meta: %w", err)
+	}
+	if assetsMeta == nil {
+		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
+	}
+
+	upsertPhoto := func(kind, storagePath string, width, height int) {
+		for i := range assetsMeta.Photos {
+			if assetsMeta.Photos[i].Kind == kind {
+				assetsMeta.Photos[i] = meta.Photo{
+					Kind:        kind,
+					StoragePath: storagePath,
+					Width:       width,
+					Height:      height,
+				}
+				return
+			}
+		}
+		assetsMeta.Photos = append(assetsMeta.Photos, meta.Photo{
+			Kind:        kind,
+			StoragePath: storagePath,
+			Width:       width,
+			Height:      height,
+		})
+	}
+
+	upsertPhoto("original", "original/"+originalEntry, 0, 0)
+	upsertPhoto("display", "photos/display.webp", displayW, displayH)
+	upsertPhoto("thumb", "photos/thumb.webp", thumbW, thumbH)
+
+	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
+		return fmt.Errorf("write assets meta: %w", err)
+	}
+
+	return nil
+}
+
+func probeImageDimensions(path string) (int, int) {
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		path,
+	)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return 0, 0
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return 0, 0
+	}
+
+	streams, ok := result["streams"].([]interface{})
+	if !ok {
+		return 0, 0
+	}
+
+	for _, s := range streams {
+		stream, ok := s.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		w, wok := stream["width"].(float64)
+		h, hok := stream["height"].(float64)
+		if wok && hok {
+			return int(w), int(h)
+		}
+	}
+
+	return 0, 0
+}

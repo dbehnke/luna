@@ -399,7 +399,7 @@ func workerCommand(cfg *config.Config) *cli.Command {
 
 			logging.Info.Printf("Video transcode concurrency: %d", cfg.VideoTranscodeConcurrency)
 
-			jobTypes := []string{models.JobTypeProbe, models.JobTypeTranscode, models.JobTypeThumbs, models.JobTypeClip, models.JobTypeHLS}
+			jobTypes := []string{models.JobTypeProbe, models.JobTypeTranscode, models.JobTypeThumbs, models.JobTypePhotoThumb, models.JobTypeClip, models.JobTypeHLS}
 
 			runLoop := true
 			go func() {
@@ -452,6 +452,8 @@ func workerCommand(cfg *config.Config) *cli.Command {
 					}
 				case jobs.ThumbsPayload:
 					execErr = processor.ProcessThumbs(j.ItemID)
+				case jobs.PhotoThumbPayload:
+					execErr = processor.ProcessPhoto(j.ItemID)
 				case jobs.ClipPayload:
 					execErr = processor.ProcessClip(j.ItemID, j.ClipID, j.StartMs, j.EndMs)
 					clipID = j.ClipID

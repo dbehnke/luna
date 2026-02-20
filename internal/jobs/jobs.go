@@ -25,6 +25,11 @@ type ThumbsPayload struct {
 	ItemID string `json:"item_id"`
 }
 
+// PhotoThumbPayload for photo derivative jobs
+type PhotoThumbPayload struct {
+	ItemID string `json:"item_id"`
+}
+
 // ClipPayload for clip jobs
 type ClipPayload struct {
 	ItemID  string `json:"item_id"`
@@ -119,6 +124,15 @@ func (q *Queue) EnqueueAudioProcessing(itemID string) error {
 		return fmt.Errorf("enqueue transcode: %w", err)
 	}
 
+	return nil
+}
+
+// EnqueuePhotoProcessing enqueues jobs for photo processing.
+func (q *Queue) EnqueuePhotoProcessing(itemID string) error {
+	_, err := q.Enqueue(models.JobTypePhotoThumb, models.JobStatusQueued, 60, PhotoThumbPayload{ItemID: itemID})
+	if err != nil {
+		return fmt.Errorf("enqueue photo thumbs: %w", err)
+	}
 	return nil
 }
 
@@ -242,6 +256,12 @@ func GetJobPayload(job *models.Job) (interface{}, error) {
 		return payload, nil
 	case models.JobTypeThumbs:
 		var payload ThumbsPayload
+		if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	case models.JobTypePhotoThumb:
+		var payload PhotoThumbPayload
 		if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
 			return nil, err
 		}

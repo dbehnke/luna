@@ -269,6 +269,12 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		}
 	}
 
+	if mediaItem.Type == models.MediaTypePhoto {
+		if err := h.jobQueue.EnqueuePhotoProcessing(itemID); err != nil {
+			logging.Info.Printf("Failed to enqueue photo processing jobs for %s: %v", itemID, err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"item_id":   itemID,
@@ -418,11 +424,20 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			resp.MediaURL = "/media/" + item.ID + "/" + itemMeta.Original.Path
 		}
 
+		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
+		if item.Type == models.MediaTypePhoto && assetsMeta != nil {
+			for _, photo := range assetsMeta.Photos {
+				if photo.Kind == "display" {
+					resp.MediaURL = "/media/" + item.ID + "/" + photo.StoragePath
+					break
+				}
+			}
+		}
+
 		if item.Type == models.MediaTypeVideo {
 			status, _ := h.jobQueue.GetProcessingStatus(item.ID)
 			resp.ProcessingStatus = status
 
-			assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
 			if assetsMeta != nil {
 				for _, asset := range assetsMeta.Assets {
 					if asset.Kind == "master_mp4" {
@@ -442,7 +457,6 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			status, _ := h.jobQueue.GetProcessingStatus(item.ID)
 			resp.ProcessingStatus = status
 
-			assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
 			if assetsMeta != nil {
 				for _, asset := range assetsMeta.Assets {
 					if asset.Kind == "master_m4a" {
@@ -512,6 +526,15 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 
 	if itemMeta != nil && itemMeta.Original.Path != "" {
 		resp.MediaURL = "/media/" + item.ID + "/" + itemMeta.Original.Path
+	}
+
+	if item.Type == models.MediaTypePhoto && assetsMeta != nil {
+		for _, photo := range assetsMeta.Photos {
+			if photo.Kind == "display" {
+				resp.MediaURL = "/media/" + item.ID + "/" + photo.StoragePath
+				break
+			}
+		}
 	}
 
 	if item.Type == models.MediaTypeVideo {
