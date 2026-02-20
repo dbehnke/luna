@@ -1,0 +1,90 @@
+const API_BASE = ''
+
+export async function createItem(type, title = '', description = '', personaId = null) {
+  const res = await fetch(`${API_BASE}/api/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type,
+      title,
+      description,
+      persona_id: personaId
+    })
+  })
+  if (!res.ok) throw new Error('Failed to create item')
+  return res.json()
+}
+
+export async function uploadFile(itemId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/upload`, {
+    method: 'POST',
+    body: formData
+  })
+  if (!res.ok) throw new Error('Failed to upload file')
+  return res.json()
+}
+
+export async function listItems(options = {}) {
+  const params = new URLSearchParams()
+  if (options.type) params.append('type', options.type)
+  if (options.user === 'me') params.append('user', 'me')
+  if (options.limit) params.append('limit', options.limit)
+  if (options.cursor) params.append('cursor', options.cursor)
+  
+  const res = await fetch(`${API_BASE}/api/items?${params}`)
+  if (!res.ok) throw new Error('Failed to list items')
+  return res.json()
+}
+
+export async function getItem(id) {
+  const res = await fetch(`${API_BASE}/api/items/${id}`)
+  if (!res.ok) throw new Error('Failed to get item')
+  return res.json()
+}
+
+export async function deleteItem(id) {
+  const res = await fetch(`${API_BASE}/api/items/${id}`, {
+    method: 'DELETE'
+  })
+  if (!res.ok) throw new Error('Failed to delete item')
+  return res.json()
+}
+
+export async function createClip(itemId, startMs, endMs) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/clip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ start_ms: startMs, end_ms: endMs })
+  })
+  if (!res.ok) throw new Error('Failed to create clip')
+  return res.json()
+}
+
+export async function getItemClips(itemId) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/clips`)
+  if (!res.ok) throw new Error('Failed to get clips')
+  return res.json()
+}
+
+export async function listShorts(options = {}) {
+  const params = new URLSearchParams()
+  if (options.limit) params.append('limit', options.limit)
+  if (options.cursor) params.append('cursor', options.cursor)
+  
+  const res = await fetch(`${API_BASE}/api/shorts?${params}`)
+  if (!res.ok) throw new Error('Failed to list shorts')
+  return res.json()
+}
+
+export async function setReaction(itemId, value) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/reaction`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value })
+  })
+  if (!res.ok) throw new Error('Failed to set reaction')
+  return res.json()
+}

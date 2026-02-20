@@ -1,0 +1,50 @@
+# Binaries
+luna
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Media storage (keep these in a separate location)
+# /data/
+
+# Database
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.local
+*.env
+
+# Logs
+*.log
+
+# Build output
+dist
+build
+
+node_modules
