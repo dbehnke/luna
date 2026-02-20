@@ -13,7 +13,9 @@ import (
 
 func TestMediaHandler_BlocksNonGETHEAD(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -34,14 +36,20 @@ func TestMediaHandler_BlocksNonGETHEAD(t *testing.T) {
 
 func TestMediaHandler_AllowsGET(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	itemID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	storage.EnsureItemDirs(mediaRoot, itemID)
+	if err := storage.EnsureItemDirs(mediaRoot, itemID); err != nil {
+		t.Fatalf("EnsureItemDirs failed: %v", err)
+	}
 
 	testContent := []byte("test video content")
 	testPath := filepath.Join(mediaRoot, "items", itemID, "original", "video.mp4")
-	os.WriteFile(testPath, testContent, 0644)
+	if err := os.WriteFile(testPath, testContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -62,7 +70,9 @@ func TestMediaHandler_AllowsGET(t *testing.T) {
 
 func TestMediaHandler_BlocksTraversal(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -88,10 +98,14 @@ func TestMediaHandler_BlocksTraversal(t *testing.T) {
 
 func TestMediaHandler_BlocksDirectoryListing(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	itemID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	storage.EnsureItemDirs(mediaRoot, itemID)
+	if err := storage.EnsureItemDirs(mediaRoot, itemID); err != nil {
+		t.Fatalf("EnsureItemDirs failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -107,7 +121,9 @@ func TestMediaHandler_BlocksDirectoryListing(t *testing.T) {
 
 func TestMediaHandler_BlocksNonexistent(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -123,14 +139,20 @@ func TestMediaHandler_BlocksNonexistent(t *testing.T) {
 
 func TestMediaHandler_SupportsHEAD(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	itemID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	storage.EnsureItemDirs(mediaRoot, itemID)
+	if err := storage.EnsureItemDirs(mediaRoot, itemID); err != nil {
+		t.Fatalf("EnsureItemDirs failed: %v", err)
+	}
 
 	testContent := []byte("test content")
 	testPath := filepath.Join(mediaRoot, "items", itemID, "original", "test.mp4")
-	os.WriteFile(testPath, testContent, 0644)
+	if err := os.WriteFile(testPath, testContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -141,5 +163,36 @@ func TestMediaHandler_SupportsHEAD(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestMediaHandler_ServesAvatarPaths(t *testing.T) {
+	mediaRoot := t.TempDir()
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
+
+	avatarPath := filepath.Join(mediaRoot, "avatars", "users", "1", "personas", "abc", "avatar.jpg")
+	if err := os.MkdirAll(filepath.Dir(avatarPath), 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	testContent := []byte("avatar bytes")
+	if err := os.WriteFile(avatarPath, testContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	handler := New(mediaRoot)
+
+	// Path style used by ServeMux with http.StripPrefix("/media/", ...)
+	req := httptest.NewRequest(http.MethodGet, "/avatars/users/1/personas/abc/avatar.jpg", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body, _ := io.ReadAll(w.Body)
+	if string(body) != string(testContent) {
+		t.Fatal("avatar content mismatch")
 	}
 }

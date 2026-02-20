@@ -1,6 +1,20 @@
-version: '3'
+version: "3"
 
 tasks:
+  # Install repository-managed git hooks
+  install-hooks:
+    desc: Configure git to use hooks from .githooks
+    cmds:
+      - git config core.hooksPath .githooks
+      - chmod +x .githooks/pre-commit
+      - echo "Git hooks installed from .githooks"
+
+  # Run golangci-lint
+  lint:
+    desc: Run golangci-lint checks
+    cmds:
+      - golangci-lint run ./...
+
   # Build frontend with Vite
   build-frontend:
     desc: Build the Vue frontend
@@ -20,19 +34,19 @@ tasks:
   # Build Go binary with embedded frontend
   build-backend:
     desc: Build Go backend with embedded frontend
+    deps: [build-frontend, prepare-embed]
     cmds:
       - go build -o luna -ldflags="-s -w" ./cmd/luna
 
   # Full build: frontend + backend with embed
   build:
     desc: Build frontend and embed into Go binary
-    deps: [build-frontend, prepare-embed]
-    cmds:
-      - go build -o luna -ldflags="-s -w" ./cmd/luna
+    deps: [build-backend]
 
-  # Development build (faster, no embed)
+  # Development build (still uses embedded frontend assets)
   dev:
-    desc: Build without embedding frontend
+    desc: Build debug backend binary with embedded frontend
+    deps: [build-frontend, prepare-embed]
     cmds:
       - go build -o luna ./cmd/luna
 

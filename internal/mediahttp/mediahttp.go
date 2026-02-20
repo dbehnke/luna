@@ -53,7 +53,9 @@ func (h *MediaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path = strings.TrimPrefix(path, "/media/")
+	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimPrefix(path, "media/")
+	path = strings.TrimPrefix(path, "/")
 	if path == "" {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
@@ -62,6 +64,10 @@ func (h *MediaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var baseDir string
 	if strings.HasPrefix(path, "avatars/") {
 		baseDir = h.avatarsDir
+		path = strings.TrimPrefix(path, "avatars/")
+	} else if strings.HasPrefix(path, "items/") {
+		baseDir = h.itemsDir
+		path = strings.TrimPrefix(path, "items/")
 	} else {
 		baseDir = h.itemsDir
 	}

@@ -88,9 +88,10 @@ func GenerateStorageReport(mediaRoot, sqlitePath string) (*StorageReport, error)
 		report.Breakdown.Thumbs += thumbsSize
 		report.Breakdown.Meta += metaSize
 
-		if itemType == "video" {
+		switch itemType {
+		case "video":
 			report.Counts.Videos++
-		} else if itemType == "photo" {
+		case "photo":
 			report.Counts.Photos++
 		}
 

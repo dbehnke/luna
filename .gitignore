@@ -1,6 +1,6 @@
 # Binaries
-luna
-app
+/luna
+/app
 *.exe
 *.dll
 *.so
@@ -47,5 +47,8 @@ Thumbs.db
 # Build output
 dist
 build
+
+# Generated embedded frontend output
+/cmd/luna/frontend/
 
 node_modules

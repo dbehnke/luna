@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var ErrPathTraversal = errors.New("path traversal attempt detected")
@@ -67,7 +68,7 @@ func SafeJoinItem(root, itemID, relPath string) (string, error) {
 	itemDir := filepath.Join(root, "items", itemID)
 	cleaned := filepath.Clean(filepath.Join(itemDir, relPath))
 
-	if !filepath.HasPrefix(cleaned, itemDir+string(filepath.Separator)) && cleaned != itemDir {
+	if !isWithinDir(itemDir, cleaned) {
 		return "", ErrEscapesItemDir
 	}
 
@@ -110,6 +111,22 @@ func AvatarRelativePath(userID uint, personaID string) string {
 	return fmt.Sprintf("avatars/users/%d/personas/%s/avatar.webp", userID, personaID)
 }
 
+// AvatarPathWithExt returns the absolute path for a persona's avatar using the given extension.
+func AvatarPathWithExt(mediaRoot string, userID uint, personaID, ext string) string {
+	if ext == "" {
+		ext = ".webp"
+	}
+	return filepath.Join(AvatarDir(mediaRoot, userID, personaID), "avatar"+ext)
+}
+
+// AvatarRelativePathWithExt returns the relative serving path for a persona's avatar with extension.
+func AvatarRelativePathWithExt(userID uint, personaID, ext string) string {
+	if ext == "" {
+		ext = ".webp"
+	}
+	return fmt.Sprintf("avatars/users/%d/personas/%s/avatar%s", userID, personaID, ext)
+}
+
 // EnsureAvatarDir creates the directory structure for a persona's avatar
 func EnsureAvatarDir(mediaRoot string, userID uint, personaID string) error {
 	dir := AvatarDir(mediaRoot, userID, personaID)
@@ -132,9 +149,20 @@ func SafeJoinAvatar(mediaRoot string, userID uint, personaID string, filename st
 	avatarDir := AvatarDir(mediaRoot, userID, personaID)
 	cleaned := filepath.Clean(filepath.Join(avatarDir, filename))
 
-	if !filepath.HasPrefix(cleaned, avatarDir+string(filepath.Separator)) && cleaned != avatarDir {
+	if !isWithinDir(avatarDir, cleaned) {
 		return "", ErrEscapesItemDir
 	}
 
 	return cleaned, nil
+}
+
+func isWithinDir(baseDir, candidate string) bool {
+	rel, err := filepath.Rel(baseDir, candidate)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

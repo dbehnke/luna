@@ -78,15 +78,15 @@ func Snapshot(mediaRoot, sqlitePath, outputPath string, opts SnapshotOptions) (*
 	if err != nil {
 		return nil, fmt.Errorf("create output file: %w", err)
 	}
-	defer outFile.Close()
+	defer func() { _ = outFile.Close() }()
 
 	// Create gzip writer
 	gzw := gzip.NewWriter(outFile)
-	defer gzw.Close()
+	defer func() { _ = gzw.Close() }()
 
 	// Create tar writer
 	tw := tar.NewWriter(gzw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	// Track counts
 	counts := Counts{}
@@ -221,15 +221,8 @@ func Snapshot(mediaRoot, sqlitePath, outputPath string, opts SnapshotOptions) (*
 		Schema:             SchemaVersion,
 		CreatedAt:          time.Now(),
 		MediaRootLayoutVer: SchemaVersion,
-		Options: Options{
-			IncludeMedia:     opts.IncludeMedia,
-			IncludeDerived:   opts.IncludeDerived,
-			IncludeOriginals: opts.IncludeOriginals,
-			IncludeAvatars:   opts.IncludeAvatars,
-			IncludeDB:        opts.IncludeDB,
-			IncludeMeta:      opts.IncludeMeta,
-		},
-		Counts: counts,
+		Options:            Options(opts),
+		Counts:             counts,
 	}
 
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
@@ -274,7 +267,7 @@ func addFileToTar(tw *tar.Writer, fullPath, relPath string, counts *Counts) erro
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil {
@@ -337,13 +330,13 @@ func ReadManifest(snapshotPath string) (*SnapshotManifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open snapshot: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gzr, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, fmt.Errorf("create gzip reader: %w", err)
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 

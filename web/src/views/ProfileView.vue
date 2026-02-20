@@ -3,18 +3,18 @@
     <router-link to="/" class="fixed top-4 left-4 z-50 bg-black/50 text-white px-4 py-2 rounded-lg">
       ← Back
     </router-link>
-    
+
     <div v-if="loading && !profile" class="flex flex-col items-center justify-center h-screen text-white">
       Loading profile...
     </div>
-    
+
     <div v-else-if="error" class="flex flex-col items-center justify-center h-screen text-white">
       <p class="text-red-400 mb-4">{{ error }}</p>
       <router-link to="/" class="text-blue-400 hover:text-blue-300">
         Go Home
       </router-link>
     </div>
-    
+
     <div v-else-if="profile">
       <div class="p-6 pt-16">
         <div class="flex items-center gap-4 mb-6">
@@ -30,22 +30,25 @@
           >
             {{ initials }}
           </div>
-          
+
           <div>
             <h1 class="text-2xl font-bold">{{ profile.display_name }}</h1>
+            <p v-if="profile.description" class="text-sm text-gray-300 mt-1 max-w-2xl">
+              {{ profile.description }}
+            </p>
             <div class="flex gap-4 mt-2 text-gray-400">
               <span>{{ profile.counts.videos }} videos</span>
               <span>{{ profile.counts.shorts }} shorts</span>
             </div>
           </div>
         </div>
-        
+
         <div class="flex border-b border-gray-700 mb-6">
           <button
             :class="[
               'flex-1 py-3 text-center font-medium transition-colors',
-              activeTab === 'videos' 
-                ? 'text-purple-400 border-b-2 border-purple-400' 
+              activeTab === 'videos'
+                ? 'text-purple-400 border-b-2 border-purple-400'
                 : 'text-gray-400 hover:text-white'
             ]"
             @click="activeTab = 'videos'"
@@ -55,8 +58,8 @@
           <button
             :class="[
               'flex-1 py-3 text-center font-medium transition-colors',
-              activeTab === 'shorts' 
-                ? 'text-purple-400 border-b-2 border-purple-400' 
+              activeTab === 'shorts'
+                ? 'text-purple-400 border-b-2 border-purple-400'
                 : 'text-gray-400 hover:text-white'
             ]"
             @click="activeTab = 'shorts'"
@@ -64,7 +67,7 @@
             Shorts
           </button>
         </div>
-        
+
         <div v-if="activeTab === 'videos'">
           <div class="flex flex-wrap gap-2 mb-4">
             <div class="relative flex-1 min-w-[200px]">
@@ -79,7 +82,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
               </svg>
             </div>
-            
+
             <select
               v-model="sortOrder"
               class="bg-[#162a4a] text-white px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
@@ -89,15 +92,15 @@
               <option value="old">Oldest First</option>
             </select>
           </div>
-          
+
           <div v-if="videosLoading" class="text-center text-gray-400 py-8">
             Loading videos...
           </div>
-          
+
           <div v-else-if="videos.length === 0" class="text-center text-gray-400 py-8">
             No videos yet
           </div>
-          
+
           <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <router-link
               v-for="video in videos"
@@ -124,9 +127,9 @@
               </div>
             </router-link>
           </div>
-          
+
           <div v-if="videosHasMore" class="text-center mt-6">
-            <button 
+            <button
               class="bg-purple-600 hover:bg-purple-500 px-6 py-2 rounded-lg"
               @click="loadMoreVideos"
             >
@@ -134,16 +137,16 @@
             </button>
           </div>
         </div>
-        
+
         <div v-if="activeTab === 'shorts'">
           <div v-if="shortsLoading" class="text-center text-gray-400 py-8">
             Loading shorts...
           </div>
-          
+
           <div v-else-if="shorts.length === 0" class="text-center text-gray-400 py-8">
             No shorts yet
           </div>
-          
+
           <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div
               v-for="short in shorts"
@@ -173,9 +176,9 @@
               </div>
             </div>
           </div>
-          
+
           <div v-if="shortsHasMore" class="text-center mt-6">
-            <button 
+            <button
               class="bg-purple-600 hover:bg-purple-500 px-6 py-2 rounded-lg"
               @click="loadMoreShorts"
             >
@@ -228,7 +231,7 @@ const initials = computed(() => {
 async function loadProfile() {
   loading.value = true
   error.value = ''
-  
+
   try {
     profile.value = await getProfile(slug.value)
   } catch (e) {
@@ -242,7 +245,7 @@ async function loadVideos(append = false) {
   if (append) {
     videosLoading.value = true
   }
-  
+
   try {
     const options = {
       type: 'video',
@@ -251,15 +254,15 @@ async function loadVideos(append = false) {
     }
     if (searchQuery.value) options.q = searchQuery.value
     if (append && videosCursor.value) options.cursor = videosCursor.value
-    
+
     const result = await getProfileItems(slug.value, options)
-    
+
     if (append) {
       videos.value = [...videos.value, ...result.items]
     } else {
       videos.value = result.items
     }
-    
+
     videosHasMore.value = result.has_more
     videosCursor.value = result.next_cursor || ''
   } catch (e) {
@@ -281,19 +284,19 @@ async function loadShorts(append = false) {
   if (append) {
     shortsLoading.value = true
   }
-  
+
   try {
     const result = await getProfileShorts(slug.value, {
       limit: 12,
       cursor: append ? shortsCursor.value : undefined
     })
-    
+
     if (append) {
       shorts.value = [...shorts.value, ...result.shorts]
     } else {
       shorts.value = result.shorts
     }
-    
+
     shortsHasMore.value = result.has_more
     shortsCursor.value = result.next_cursor || ''
   } catch (e) {

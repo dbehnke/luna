@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: luna:local
+    container_name: luna-server
+    command: ["serve"]
+    environment:
+      MEDIA_ROOT: /data/media
+      SQLITE_PATH: /data/db/app.sqlite
+      HTTP_ADDR: ":8080"
+      VIDEO_TRANSCODE_CONCURRENCY: "1"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${LUNA_MEDIA_ROOT_HOST:-/mnt/nfs/luna-media}:/data/media
+      - ${LUNA_DB_ROOT_HOST:-./docker-data/db}:/data/db
+    restart: unless-stopped
+
+  worker:
+    image: luna:local
+    container_name: luna-worker
+    command: ["worker", "--id", "worker-1"]
+    environment:
+      MEDIA_ROOT: /data/media
+      SQLITE_PATH: /data/db/app.sqlite
+      VIDEO_TRANSCODE_CONCURRENCY: "1"
+    volumes:
+      - ${LUNA_MEDIA_ROOT_HOST:-/mnt/nfs/luna-media}:/data/media
+      - ${LUNA_DB_ROOT_HOST:-./docker-data/db}:/data/db
+    depends_on:
+      - server
+    restart: unless-stopped

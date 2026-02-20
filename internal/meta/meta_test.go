@@ -137,7 +137,9 @@ func TestReadItemMeta_InvalidSchema(t *testing.T) {
 
 	path := filepath.Join(tmpDir, "item.json")
 	data, _ := json.Marshal(invalid)
-	os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	_, err := ReadItemMeta(path)
 	if err == nil {

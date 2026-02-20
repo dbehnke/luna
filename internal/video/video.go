@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 
 	"luna/internal/id"
 	"luna/internal/meta"
@@ -15,10 +17,25 @@ import (
 
 type Processor struct {
 	mediaRoot string
+	webpOnce  sync.Once
+	hasWebP   bool
 }
 
 func NewProcessor(mediaRoot string) *Processor {
 	return &Processor{mediaRoot: mediaRoot}
+}
+
+func (p *Processor) supportsWebP() bool {
+	p.webpOnce.Do(func() {
+		out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").CombinedOutput()
+		if err != nil {
+			p.hasWebP = false
+			return
+		}
+		encoders := strings.ToLower(string(out))
+		p.hasWebP = strings.Contains(encoders, "libwebp") || strings.Contains(encoders, " webp")
+	})
+	return p.hasWebP
 }
 
 func (p *Processor) CheckFFmpeg() (bool, string) {
@@ -176,8 +193,8 @@ func (p *Processor) Transcode(itemID string, probeResult *ProbeResult) error {
 
 	outputPath := filepath.Join(derivedDir, "master.mp4")
 
-	tmpOutput := outputPath + ".tmp"
-	defer os.Remove(tmpOutput)
+	tmpOutput := outputPath + ".tmp.mp4"
+	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := MasterTranscodeArgs(originalFile, tmpOutput, *probeResult)
 
@@ -267,8 +284,8 @@ func (p *Processor) TranscodeAudio(itemID string, probeResult *ProbeResult) erro
 
 	outputPath := filepath.Join(derivedDir, "master.m4a")
 
-	tmpOutput := outputPath + ".tmp"
-	defer os.Remove(tmpOutput)
+	tmpOutput := outputPath + ".tmp.m4a"
+	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := AudioTranscodeArgs(originalFile, tmpOutput)
 
@@ -359,23 +376,39 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 	if assetsMeta == nil {
 		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
 	}
+	assetsMeta.Thumbnails = nil
+
+	useWebP := p.supportsWebP()
+	thumbExt := ".png"
+	format := "image2"
+	codecArgs := []string{"-c:v", "png"}
+	extraArgs := []string{}
+	if useWebP {
+		thumbExt = ".webp"
+		format = "webp"
+		codecArgs = nil
+		extraArgs = []string{"-lossless", "1"}
+	}
 
 	for i, pct := range percentages {
 		timestamp := duration * pct
-		outputPath := filepath.Join(thumbsDir, fmt.Sprintf("t_%04d.webp", i+1))
+		outputPath := filepath.Join(thumbsDir, fmt.Sprintf("t_%04d%s", i+1, thumbExt))
 
-		tmpOutput := outputPath + ".tmp"
-		defer os.Remove(tmpOutput)
+		tmpOutput := outputPath + ".tmp" + thumbExt
+		defer func() { _ = os.Remove(tmpOutput) }()
 
-		cmd := exec.Command("ffmpeg",
+		args := []string{
 			"-y",
 			"-ss", fmt.Sprintf("%.2f", timestamp),
 			"-i", originalFile,
 			"-vframes", "1",
 			"-vf", "scale=480:-2",
-			"-lossless", "1",
-			tmpOutput,
-		)
+			"-f", format,
+		}
+		args = append(args, codecArgs...)
+		args = append(args, extraArgs...)
+		args = append(args, tmpOutput)
+		cmd := exec.Command("ffmpeg", args...)
 
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -389,7 +422,7 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 		}
 
 		assetsMeta.Thumbnails = append(assetsMeta.Thumbnails, meta.Thumbnail{
-			StoragePath: fmt.Sprintf("thumbs/t_%04d.webp", i+1),
+			StoragePath: fmt.Sprintf("thumbs/t_%04d%s", i+1, thumbExt),
 			Timestamp:   fmt.Sprintf("%.0f%%", pct*100),
 		})
 	}
@@ -399,6 +432,83 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 	}
 
 	return nil
+}
+
+// SetThumbnailAt generates/replaces the primary thumbnail (t_0001) at a specific timestamp.
+// It prefers derived/master.mp4 when available, and falls back to original upload.
+func (p *Processor) SetThumbnailAt(itemID string, timestampSec float64) (meta.Thumbnail, error) {
+	if timestampSec < 0 {
+		return meta.Thumbnail{}, fmt.Errorf("invalid timestamp: %f", timestampSec)
+	}
+
+	thumbsDir := filepath.Join(p.mediaRoot, "items", itemID, "thumbs")
+	if err := os.MkdirAll(thumbsDir, 0755); err != nil {
+		return meta.Thumbnail{}, fmt.Errorf("create thumbs dir: %w", err)
+	}
+
+	inputPath := filepath.Join(p.mediaRoot, "items", itemID, "derived", "master.mp4")
+	if _, err := os.Stat(inputPath); err != nil {
+		originalDir := filepath.Join(p.mediaRoot, "items", itemID, "original")
+		entries, readErr := os.ReadDir(originalDir)
+		if readErr != nil {
+			return meta.Thumbnail{}, fmt.Errorf("read original dir: %w", readErr)
+		}
+
+		inputPath = ""
+		for _, e := range entries {
+			if !e.IsDir() {
+				inputPath = filepath.Join(originalDir, e.Name())
+				break
+			}
+		}
+		if inputPath == "" {
+			return meta.Thumbnail{}, fmt.Errorf("no source file found")
+		}
+	}
+
+	useWebP := p.supportsWebP()
+	thumbExt := ".png"
+	format := "image2"
+	codecArgs := []string{"-c:v", "png"}
+	extraArgs := []string{}
+	if useWebP {
+		thumbExt = ".webp"
+		format = "webp"
+		codecArgs = nil
+		extraArgs = []string{"-lossless", "1"}
+	}
+
+	outputPath := filepath.Join(thumbsDir, "t_0001"+thumbExt)
+	tmpOutput := outputPath + ".tmp" + thumbExt
+	defer func() { _ = os.Remove(tmpOutput) }()
+
+	args := []string{
+		"-y",
+		"-ss", fmt.Sprintf("%.3f", timestampSec),
+		"-i", inputPath,
+		"-vframes", "1",
+		"-vf", "scale=480:-2",
+		"-f", format,
+	}
+	args = append(args, codecArgs...)
+	args = append(args, extraArgs...)
+	args = append(args, tmpOutput)
+	cmd := exec.Command("ffmpeg", args...)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return meta.Thumbnail{}, fmt.Errorf("ffmpeg set thumb failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return meta.Thumbnail{}, fmt.Errorf("rename thumb: %w", err)
+	}
+
+	return meta.Thumbnail{
+		StoragePath: "thumbs/t_0001" + thumbExt,
+		Timestamp:   fmt.Sprintf("%.3fs", timestampSec),
+	}, nil
 }
 
 func (p *Processor) ProcessProbe(itemID string) error {
@@ -506,8 +616,8 @@ func (p *Processor) ProcessClip(itemID, clipID string, startMs, endMs int64) err
 
 	outputPath := filepath.Join(derivedDir, fmt.Sprintf("short_%s.mp4", clipID))
 
-	tmpOutput := outputPath + ".tmp"
-	defer os.Remove(tmpOutput)
+	tmpOutput := outputPath + ".tmp.mp4"
+	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := ClipTranscodeArgs(inputPath, tmpOutput, ProbeResult{}, startMs, endMs)
 
@@ -584,18 +694,18 @@ func (p *Processor) ProcessHLS(itemID string) error {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("ffmpeg hls failed: %w, stderr: %s", err, stderr.String())
 	}
 
 	indexPath := filepath.Join(tmpDir, "index.m3u8")
 	if _, err := os.Stat(indexPath); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("hls index.m3u8 not created: %w", err)
 	}
 
 	if err := os.Rename(tmpDir, hlsDir); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("rename hls dir: %w", err)
 	}
 
@@ -607,6 +717,10 @@ func (p *Processor) ProcessHLS(itemID string) error {
 				Bandwidth: v.Bandwidth,
 			})
 		}
+	}
+	// HLSArgs currently emits one stable variant for reliability (highest <= source height).
+	if len(hlsVariants) > 1 {
+		hlsVariants = hlsVariants[len(hlsVariants)-1:]
 	}
 
 	assetsMeta, err = meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
@@ -642,4 +756,158 @@ func (p *Processor) ProcessHLS(itemID string) error {
 	}
 
 	return nil
+}
+
+func (p *Processor) ProcessPhoto(itemID string) error {
+	inputPath := filepath.Join(p.mediaRoot, "items", itemID, "original")
+	entries, err := os.ReadDir(inputPath)
+	if err != nil {
+		return fmt.Errorf("read original dir: %w", err)
+	}
+
+	var originalEntry string
+	var originalFile string
+	for _, e := range entries {
+		if !e.IsDir() {
+			originalEntry = e.Name()
+			originalFile = filepath.Join(inputPath, e.Name())
+			break
+		}
+	}
+
+	if originalFile == "" {
+		return fmt.Errorf("no original file found")
+	}
+
+	photosDir := filepath.Join(p.mediaRoot, "items", itemID, "photos")
+	if err := os.MkdirAll(photosDir, 0755); err != nil {
+		return fmt.Errorf("create photos dir: %w", err)
+	}
+
+	useWebP := p.supportsWebP()
+	photoExt := ".png"
+	format := "image2"
+	codecArgs := []string{"-c:v", "png"}
+	if useWebP {
+		photoExt = ".webp"
+		format = "webp"
+		codecArgs = nil
+	}
+
+	displayPath := filepath.Join(photosDir, "display"+photoExt)
+	thumbPath := filepath.Join(photosDir, "thumb"+photoExt)
+
+	writeResized := func(outputPath string, size int) error {
+		tmpOutput := outputPath + ".tmp" + photoExt
+		defer func() { _ = os.Remove(tmpOutput) }()
+
+		args := []string{
+			"-y",
+			"-i", originalFile,
+			"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", size, size),
+			"-vframes", "1",
+			"-f", format,
+		}
+		args = append(args, codecArgs...)
+		args = append(args, tmpOutput)
+		cmd := exec.Command("ffmpeg", args...)
+
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ffmpeg photo resize failed: %w, stderr: %s", err, stderr.String())
+		}
+
+		if err := os.Rename(tmpOutput, outputPath); err != nil {
+			return fmt.Errorf("rename photo output: %w", err)
+		}
+		return nil
+	}
+
+	if err := writeResized(displayPath, 2048); err != nil {
+		return err
+	}
+	if err := writeResized(thumbPath, 480); err != nil {
+		return err
+	}
+
+	displayW, displayH := probeImageDimensions(displayPath)
+	thumbW, thumbH := probeImageDimensions(thumbPath)
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read assets meta: %w", err)
+	}
+	if assetsMeta == nil {
+		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
+	}
+
+	upsertPhoto := func(kind, storagePath string, width, height int) {
+		for i := range assetsMeta.Photos {
+			if assetsMeta.Photos[i].Kind == kind {
+				assetsMeta.Photos[i] = meta.Photo{
+					Kind:        kind,
+					StoragePath: storagePath,
+					Width:       width,
+					Height:      height,
+				}
+				return
+			}
+		}
+		assetsMeta.Photos = append(assetsMeta.Photos, meta.Photo{
+			Kind:        kind,
+			StoragePath: storagePath,
+			Width:       width,
+			Height:      height,
+		})
+	}
+
+	upsertPhoto("original", "original/"+originalEntry, 0, 0)
+	upsertPhoto("display", "photos/display"+photoExt, displayW, displayH)
+	upsertPhoto("thumb", "photos/thumb"+photoExt, thumbW, thumbH)
+
+	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
+		return fmt.Errorf("write assets meta: %w", err)
+	}
+
+	return nil
+}
+
+func probeImageDimensions(path string) (int, int) {
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		path,
+	)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return 0, 0
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return 0, 0
+	}
+
+	streams, ok := result["streams"].([]interface{})
+	if !ok {
+		return 0, 0
+	}
+
+	for _, s := range streams {
+		stream, ok := s.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		w, wok := stream["width"].(float64)
+		h, hok := stream["height"].(float64)
+		if wok && hok {
+			return int(w), int(h)
+		}
+	}
+
+	return 0, 0
 }

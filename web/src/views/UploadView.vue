@@ -12,7 +12,7 @@
       <div v-if="!itemId" class="space-y-6">
         <div class="bg-[#0a2540] rounded-lg p-6 space-y-4">
           <h2 class="text-lg font-semibold text-white">Create New Item</h2>
-          
+
           <div>
             <label class="block text-sm text-gray-400 mb-2">Type</label>
             <div class="flex gap-4">
@@ -20,8 +20,8 @@
                 @click="mediaType = 'video'"
                 :class="[
                   'flex-1 py-3 rounded-lg font-medium transition-colors',
-                  mediaType === 'video' 
-                    ? 'bg-blue-600 text-white' 
+                  mediaType === 'video'
+                    ? 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-300'
                 ]"
               >
@@ -31,8 +31,8 @@
                 @click="mediaType = 'photo'"
                 :class="[
                   'flex-1 py-3 rounded-lg font-medium transition-colors',
-                  mediaType === 'photo' 
-                    ? 'bg-blue-600 text-white' 
+                  mediaType === 'photo'
+                    ? 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-300'
                 ]"
               >
@@ -62,8 +62,8 @@
                 <option :value="null">Self</option>
                 <option
                   v-for="persona in personas"
-                  :key="persona.persona_id"
-                  :value="persona.persona_id"
+                  :key="persona.id"
+                  :value="persona.id"
                 >
                   {{ persona.display_name }}
                 </option>
@@ -102,7 +102,7 @@
         <div class="bg-[#0a2540] rounded-lg p-6 space-y-4">
           <h2 class="text-lg font-semibold text-white">Upload File</h2>
           <p class="text-gray-400">Selected: {{ title || 'Untitled' }}</p>
-          
+
           <div
             @dragover.prevent="dragOver = true"
             @dragleave.prevent="dragOver = false"
@@ -119,7 +119,7 @@
               @change="handleFileSelect"
               class="hidden"
             />
-            
+
             <div v-if="!selectedFile" class="space-y-2">
               <p class="text-gray-400">
                 {{ dragOver ? 'Drop file here' : 'Drag & drop or click to select' }}
@@ -134,7 +134,7 @@
                 Select File
               </button>
             </div>
-            
+
             <div v-else class="space-y-2">
               <p class="text-white font-medium">{{ selectedFile.name }}</p>
               <p class="text-sm text-gray-400">{{ formatSize(selectedFile.size) }}</p>
@@ -165,7 +165,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { createItem, uploadFile, getPersonas, getPersonaAvatarUrl } from '../services/api'
+import { createItem, uploadFile, getPersonas } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const router = useRouter()
@@ -196,7 +196,7 @@ function updateSelectedPersona() {
   if (selectedPersonaId.value === null) {
     selectedPersona.value = null
   } else {
-    selectedPersona.value = personas.value.find(p => p.persona_id === selectedPersonaId.value)
+    selectedPersona.value = personas.value.find(p => p.id === selectedPersonaId.value)
   }
 }
 
@@ -210,7 +210,7 @@ const uploadError = ref('')
 async function doCreateItem() {
   creating.value = true
   error.value = ''
-  
+
   try {
     const result = await createItem(mediaType.value, title.value, description.value, selectedPersonaId.value)
     itemId.value = result.item_id
@@ -249,7 +249,7 @@ function formatSize(bytes) {
 async function doUploadFile() {
   uploading.value = true
   uploadError.value = ''
-  
+
   try {
     const result = await uploadFile(itemId.value, selectedFile.value)
     router.push(`/item/${itemId.value}`)

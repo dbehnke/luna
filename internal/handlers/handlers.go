@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,8 @@ import (
 	"luna/internal/meta"
 	"luna/internal/models"
 	"luna/internal/storage"
+	"luna/internal/useradmin"
+	"luna/internal/video"
 
 	"gorm.io/gorm"
 )
@@ -45,6 +48,11 @@ type CreateItemResponse struct {
 	UploadURL string `json:"upload_url"`
 }
 
+type UpdateItemRequest struct {
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
 type MediaItemResponse struct {
 	ID               string   `json:"id"`
 	UserID           uint     `json:"user_id"`
@@ -65,6 +73,7 @@ type MediaItemResponse struct {
 	PersonaAvatarURL *string  `json:"persona_avatar_url,omitempty"`
 	IsFavorited      bool     `json:"is_favorited"`
 	IsHighlighted    bool     `json:"is_highlighted"`
+	CanManage        bool     `json:"can_manage,omitempty"`
 }
 
 type ListItemsResponse struct {
@@ -99,10 +108,16 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 
 	if req.PersonaID != nil && *req.PersonaID != "" {
 		var persona models.Persona
-		if err := h.db.First(&persona, "id = ?", *req.PersonaID).Error; err == nil && persona.UserID == user.ID {
-			personaID = &persona.ID
-			personaDisplayName = &persona.DisplayName
+		if err := h.db.First(&persona, "id = ?", *req.PersonaID).Error; err != nil {
+			http.Error(w, "Invalid persona_id", http.StatusBadRequest)
+			return
 		}
+		if persona.UserID != user.ID {
+			http.Error(w, "Forbidden - persona is not owned by current user", http.StatusForbidden)
+			return
+		}
+		personaID = &persona.ID
+		personaDisplayName = &persona.DisplayName
 	}
 
 	mediaItem := models.MediaItem{
@@ -163,10 +178,12 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateItemResponse{
+	if err := json.NewEncoder(w).Encode(CreateItemResponse{
 		ItemID:    itemID,
 		UploadURL: fmt.Sprintf("/api/items/%s/upload", itemID),
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode create item response: %v", err)
+	}
 }
 
 func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -197,7 +214,11 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close upload file for item %s: %v", itemID, closeErr)
+		}
+	}()
 
 	originalFilename := header.Filename
 	ext := strings.ToLower(filepath.Ext(originalFilename))
@@ -219,17 +240,28 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		http.Error(w, fmt.Sprintf("Failed to create temp file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer tmpFile.Close()
+	defer func() {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close temp upload file for item %s: %v", itemID, closeErr)
+		}
+	}()
 
 	if _, err := io.Copy(tmpFile, file); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to finalize temp file: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to save file: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -269,11 +301,19 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		}
 	}
 
+	if mediaItem.Type == models.MediaTypePhoto {
+		if err := h.jobQueue.EnqueuePhotoProcessing(itemID); err != nil {
+			logging.Info.Printf("Failed to enqueue photo processing jobs for %s: %v", itemID, err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"item_id":   itemID,
 		"media_url": fmt.Sprintf("/media/%s/original/upload%s", itemID, ext),
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode upload response for item %s: %v", itemID, err)
+	}
 }
 
 func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +323,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 
 	searchQuery := r.URL.Query().Get("q")
 	if searchQuery != "" {
-		query = query.Where("title ILIKE ?", "%"+searchQuery+"%")
+		query = query.Where("LOWER(title) LIKE LOWER(?)", "%"+searchQuery+"%")
 	}
 
 	itemType := r.URL.Query().Get("type")
@@ -309,10 +349,12 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			query = query.Where("id IN ?", favoriteItemIDs)
 		} else {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(ListItemsResponse{
+			if err := json.NewEncoder(w).Encode(ListItemsResponse{
 				Items:   []MediaItemResponse{},
 				HasMore: false,
-			})
+			}); err != nil {
+				logging.Error.Printf("Failed to encode empty list items response: %v", err)
+			}
 			return
 		}
 	}
@@ -329,10 +371,30 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sortOrder := "created_at DESC"
+	sortOrder := "created_at DESC, id DESC"
 	sortParam := r.URL.Query().Get("sort")
+	sortDescending := true
 	if sortParam == "old" {
-		sortOrder = "created_at ASC"
+		sortOrder = "created_at ASC, id ASC"
+		sortDescending = false
+	}
+
+	cursor := r.URL.Query().Get("cursor")
+	if cursor != "" {
+		if decodedBytes, err := base64.StdEncoding.DecodeString(cursor); err == nil {
+			parts := strings.Split(string(decodedBytes), "|")
+			if len(parts) == 2 {
+				if tsNanos, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+					cursorTime := time.Unix(0, tsNanos).UTC()
+					cursorID := parts[1]
+					if sortDescending {
+						query = query.Where("(created_at < ? OR (created_at = ? AND id < ?))", cursorTime, cursorTime, cursorID)
+					} else {
+						query = query.Where("(created_at > ? OR (created_at = ? AND id > ?))", cursorTime, cursorTime, cursorID)
+					}
+				}
+			}
+		}
 	}
 
 	var items []models.MediaItem
@@ -345,6 +407,12 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	hasMore := len(items) > limit
 	if hasMore {
 		items = items[:limit]
+	}
+
+	var nextCursor string
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d|%s", last.CreatedAt.UnixNano(), last.ID)))
 	}
 
 	userFavoritedIDs := map[string]bool{}
@@ -374,6 +442,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			IsFavorited:   userFavoritedIDs[item.ID],
 			IsHighlighted: item.IsHighlighted,
 		}
+		resp.CanManage = h.canManageItem(user, &item)
 
 		if item.PersonaID != nil {
 			resp.PersonaID = item.PersonaID
@@ -392,11 +461,20 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			resp.MediaURL = "/media/" + item.ID + "/" + itemMeta.Original.Path
 		}
 
+		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
+		if item.Type == models.MediaTypePhoto && assetsMeta != nil {
+			for _, photo := range assetsMeta.Photos {
+				if photo.Kind == "display" {
+					resp.MediaURL = "/media/" + item.ID + "/" + photo.StoragePath
+					break
+				}
+			}
+		}
+
 		if item.Type == models.MediaTypeVideo {
 			status, _ := h.jobQueue.GetProcessingStatus(item.ID)
 			resp.ProcessingStatus = status
 
-			assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
 			if assetsMeta != nil {
 				for _, asset := range assetsMeta.Assets {
 					if asset.Kind == "master_mp4" {
@@ -407,7 +485,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if len(assetsMeta.Thumbnails) > 0 {
-					resp.ThumbURLs = []string{"/media/" + item.ID + "/" + assetsMeta.Thumbnails[0].StoragePath}
+					resp.ThumbURLs = []string{thumbnailURL(item.ID, assetsMeta.Thumbnails[0])}
 				}
 			}
 		}
@@ -416,7 +494,6 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			status, _ := h.jobQueue.GetProcessingStatus(item.ID)
 			resp.ProcessingStatus = status
 
-			assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
 			if assetsMeta != nil {
 				for _, asset := range assetsMeta.Assets {
 					if asset.Kind == "master_m4a" {
@@ -430,10 +507,13 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListItemsResponse{
+	if err := json.NewEncoder(w).Encode(ListItemsResponse{
 		Items:   responses,
+		Cursor:  nextCursor,
 		HasMore: hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode list items response: %v", err)
+	}
 }
 
 func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -470,6 +550,7 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 		IsFavorited:   isFavorited,
 		IsHighlighted: item.IsHighlighted,
 	}
+	resp.CanManage = h.canManageItem(user, &item)
 
 	if item.PersonaID != nil {
 		resp.PersonaID = item.PersonaID
@@ -485,6 +566,15 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 
 	if itemMeta != nil && itemMeta.Original.Path != "" {
 		resp.MediaURL = "/media/" + item.ID + "/" + itemMeta.Original.Path
+	}
+
+	if item.Type == models.MediaTypePhoto && assetsMeta != nil {
+		for _, photo := range assetsMeta.Photos {
+			if photo.Kind == "display" {
+				resp.MediaURL = "/media/" + item.ID + "/" + photo.StoragePath
+				break
+			}
+		}
 	}
 
 	if item.Type == models.MediaTypeVideo {
@@ -508,7 +598,7 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 			}
 
 			for _, thumb := range assetsMeta.Thumbnails {
-				resp.ThumbURLs = append(resp.ThumbURLs, "/media/"+item.ID+"/"+thumb.StoragePath)
+				resp.ThumbURLs = append(resp.ThumbURLs, thumbnailURL(item.ID, thumb))
 			}
 		}
 	}
@@ -538,7 +628,9 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logging.Error.Printf("Failed to encode item response for %s: %v", itemID, err)
+	}
 }
 
 func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -559,8 +651,8 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID stri
 		return
 	}
 
-	if item.UserID != user.ID {
-		http.Error(w, "Forbidden - only owner can delete", http.StatusForbidden)
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can delete", http.StatusForbidden)
 		return
 	}
 
@@ -574,13 +666,132 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID stri
 	if err == nil {
 		deletedAt := now.Format(time.RFC3339)
 		itemMeta.State.DeletedAt = &deletedAt
-		meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta)
+		if writeErr := meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta); writeErr != nil {
+			logging.Error.Printf("Failed to update item meta delete state for %s: %v", itemID, writeErr)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "deleted",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode delete response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can edit", http.StatusForbidden)
+		return
+	}
+
+	var req UpdateItemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			http.Error(w, "title cannot be empty", http.StatusBadRequest)
+			return
+		}
+		updates["title"] = title
+		item.Title = title
+	}
+	if req.Description != nil {
+		desc := strings.TrimSpace(*req.Description)
+		updates["description"] = desc
+		item.Description = desc
+	}
+	if len(updates) == 0 {
+		http.Error(w, "No fields to update", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.Model(&item).Updates(updates).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update item: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	itemMeta, err := meta.ReadItemMetaByID(h.mediaRoot, itemID)
+	if err == nil && itemMeta != nil {
+		itemMeta.Title = item.Title
+		itemMeta.Description = item.Description
+		if writeErr := meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta); writeErr != nil {
+			logging.Error.Printf("Failed to write item meta for %s: %v", itemID, writeErr)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "updated"}); err != nil {
+		logging.Error.Printf("Failed to encode update item response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) ReprocessItem(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can reprocess", http.StatusForbidden)
+		return
+	}
+
+	// Clear failed jobs for this item to avoid stale noise in status/error reporting.
+	_ = h.db.Where("payload_json LIKE ? AND status = ?", "%"+itemID+"%", models.JobStatusFailed).
+		Delete(&models.Job{}).Error
+
+	var err error
+	switch item.Type {
+	case models.MediaTypeVideo:
+		err = h.jobQueue.EnqueueVideoProcessing(itemID)
+	case models.MediaTypeAudio:
+		err = h.jobQueue.EnqueueAudioProcessing(itemID)
+	case models.MediaTypePhoto:
+		err = h.jobQueue.EnqueuePhotoProcessing(itemID)
+	default:
+		http.Error(w, "Unsupported media type for reprocess", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to enqueue reprocess: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "queued"}); err != nil {
+		logging.Error.Printf("Failed to encode reprocess response for %s: %v", itemID, err)
+	}
 }
 
 type CreateClipRequest struct {
@@ -592,6 +803,10 @@ type CreateClipResponse struct {
 	ClipID  string `json:"clip_id"`
 	Status  string `json:"status"`
 	Message string `json:"message,omitempty"`
+}
+
+type SetThumbnailRequest struct {
+	TimestampMs int64 `json:"timestamp_ms"`
 }
 
 func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -611,6 +826,10 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 		http.Error(w, "Item not found", http.StatusNotFound)
 		return
 	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can create clips", http.StatusForbidden)
+		return
+	}
 
 	if item.Type != models.MediaTypeVideo {
 		http.Error(w, "Clips can only be created from video items", http.StatusBadRequest)
@@ -621,11 +840,13 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 	if status != "ready" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(CreateClipResponse{
+		if err := json.NewEncoder(w).Encode(CreateClipResponse{
 			ClipID:  "",
 			Status:  "not_ready",
 			Message: fmt.Sprintf("Video processing status: %s", status),
-		})
+		}); err != nil {
+			logging.Error.Printf("Failed to encode not-ready clip response for %s: %v", itemID, err)
+		}
 		return
 	}
 
@@ -699,10 +920,152 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateClipResponse{
+	if err := json.NewEncoder(w).Encode(CreateClipResponse{
 		ClipID: clipID,
 		Status: "queued",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode create clip response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) SetItemThumbnail(w http.ResponseWriter, r *http.Request, itemID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" {
+		http.Error(w, "Item ID required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if item.Type != models.MediaTypeVideo {
+		http.Error(w, "Thumbnails can only be set for videos", http.StatusBadRequest)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can set thumbnail", http.StatusForbidden)
+		return
+	}
+
+	var req SetThumbnailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.TimestampMs < 0 {
+		http.Error(w, "timestamp_ms must be >= 0", http.StatusBadRequest)
+		return
+	}
+
+	processor := video.NewProcessor(h.mediaRoot)
+	thumb, err := processor.SetThumbnailAt(itemID, float64(req.TimestampMs)/1000.0)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to generate thumbnail: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(h.mediaRoot, itemID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read assets meta: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if assetsMeta == nil {
+		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
+	}
+
+	newThumbs := []meta.Thumbnail{thumb}
+	for _, existing := range assetsMeta.Thumbnails {
+		if existing.StoragePath == thumb.StoragePath {
+			continue
+		}
+		newThumbs = append(newThumbs, existing)
+	}
+	assetsMeta.Thumbnails = newThumbs
+
+	if err := meta.WriteAssetsMetaAtomic(h.mediaRoot, itemID, assetsMeta); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write assets meta: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"status":    "updated",
+		"thumb_url": "/media/" + itemID + "/" + thumb.StoragePath,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode set thumbnail response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) DeleteClip(w http.ResponseWriter, r *http.Request, itemID string, clipID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" || clipID == "" {
+		http.Error(w, "Item ID and clip ID are required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can delete clips", http.StatusForbidden)
+		return
+	}
+
+	var clip models.ClipAsset
+	if err := h.db.Where("id = ? AND item_id = ?", clipID, itemID).First(&clip).Error; err != nil {
+		http.Error(w, "Clip not found", http.StatusNotFound)
+		return
+	}
+
+	// Best-effort cleanup of queued/failed clip jobs for this clip.
+	_ = h.db.Where(
+		"type = ? AND (status = ? OR status = ?) AND payload_json LIKE ? AND payload_json LIKE ?",
+		models.JobTypeClip,
+		models.JobStatusQueued,
+		models.JobStatusFailed,
+		"%\"item_id\":\""+itemID+"\"%",
+		"%\"clip_id\":\""+clipID+"\"%",
+	).Delete(&models.Job{}).Error
+
+	if err := h.db.Delete(&clip).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete clip: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	clipPath := filepath.Join(h.mediaRoot, "items", itemID, "derived", fmt.Sprintf("short_%s.mp4", clipID))
+	_ = os.Remove(clipPath)
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(h.mediaRoot, itemID)
+	if err == nil && assetsMeta != nil {
+		filtered := assetsMeta.Assets[:0]
+		for _, asset := range assetsMeta.Assets {
+			if asset.Kind == "short_clip" && asset.ClipID == clipID {
+				continue
+			}
+			filtered = append(filtered, asset)
+		}
+		assetsMeta.Assets = filtered
+		if writeErr := meta.WriteAssetsMetaAtomic(h.mediaRoot, itemID, assetsMeta); writeErr != nil {
+			logging.Error.Printf("Failed to write assets meta after clip delete for %s/%s: %v", itemID, clipID, writeErr)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "deleted"}); err != nil {
+		logging.Error.Printf("Failed to encode delete clip response for %s/%s: %v", itemID, clipID, err)
+	}
 }
 
 type ShortsClipResponse struct {
@@ -782,7 +1145,7 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 		thumbURL := ""
 		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, clip.ItemID)
 		if assetsMeta != nil && len(assetsMeta.Thumbnails) > 0 {
-			thumbURL = "/media/" + clip.ItemID + "/" + assetsMeta.Thumbnails[0].StoragePath
+			thumbURL = thumbnailURL(clip.ItemID, assetsMeta.Thumbnails[0])
 		}
 
 		var upCount, downCount int64
@@ -826,11 +1189,13 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListShortsResponse{
+	if err := json.NewEncoder(w).Encode(ListShortsResponse{
 		Clips:   responses,
 		Cursor:  nextCursor,
 		HasMore: hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode list shorts response: %v", err)
+	}
 }
 
 type SetReactionRequest struct {
@@ -895,11 +1260,13 @@ func (h *Handler) SetReaction(w http.ResponseWriter, r *http.Request, itemID str
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"up_count":      upCount,
 		"down_count":    downCount,
 		"user_reaction": userReaction,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode reaction response for %s: %v", itemID, err)
+	}
 }
 
 type SetFavoriteRequest struct {
@@ -946,9 +1313,11 @@ func (h *Handler) SetFavorite(w http.ResponseWriter, r *http.Request, itemID str
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{
+	if err := json.NewEncoder(w).Encode(map[string]bool{
 		"is_favorited": req.Enabled,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode favorite response for %s: %v", itemID, err)
+	}
 }
 
 type SetHighlightRequest struct {
@@ -973,8 +1342,8 @@ func (h *Handler) SetHighlight(w http.ResponseWriter, r *http.Request, itemID st
 		return
 	}
 
-	if item.UserID != user.ID {
-		http.Error(w, "Forbidden - only owner can toggle highlight", http.StatusForbidden)
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can toggle highlight", http.StatusForbidden)
 		return
 	}
 
@@ -992,13 +1361,39 @@ func (h *Handler) SetHighlight(w http.ResponseWriter, r *http.Request, itemID st
 	itemMeta, err := meta.ReadItemMetaByID(h.mediaRoot, itemID)
 	if err == nil {
 		itemMeta.State.Highlighted = req.Enabled
-		meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta)
+		if writeErr := meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta); writeErr != nil {
+			logging.Error.Printf("Failed to update item meta highlight state for %s: %v", itemID, writeErr)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{
+	if err := json.NewEncoder(w).Encode(map[string]bool{
 		"is_highlighted": req.Enabled,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode highlight response for %s: %v", itemID, err)
+	}
+}
+
+func (h *Handler) canManageItem(user *models.User, item *models.MediaItem) bool {
+	if user == nil || item == nil {
+		return false
+	}
+	if user.Role == models.RoleAdmin {
+		return true
+	}
+	if item.UserID == user.ID {
+		return true
+	}
+	if item.PersonaID == nil || *item.PersonaID == "" {
+		return false
+	}
+
+	var persona models.Persona
+	if err := h.db.Select("id", "user_id").First(&persona, "id = ?", *item.PersonaID).Error; err != nil {
+		return false
+	}
+
+	return persona.UserID == user.ID
 }
 
 func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -1041,15 +1436,117 @@ func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID st
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"clips": responses,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode clips response for %s: %v", itemID, err)
+	}
 }
 
 type CurrentUserResponse struct {
 	ID       uint   `json:"id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	IsActive bool   `json:"is_active"`
+}
+
+type AdminUserResponse struct {
+	ID            uint    `json:"id"`
+	Username      string  `json:"username"`
+	Role          string  `json:"role"`
+	IsActive      bool    `json:"is_active"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	DeactivatedAt *string `json:"deactivated_at,omitempty"`
+}
+
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", req.Username).First(&user).Error; err != nil {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	if !auth.VerifyPassword(req.Password, user.PasswordHash) {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+	if !user.IsActive {
+		http.Error(w, "Account is deactivated", http.StatusForbidden)
+		return
+	}
+
+	token, err := auth.NewSessionToken()
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	expiresAt := time.Now().UTC().Add(auth.SessionDuration)
+	session := models.Session{
+		ID:        token,
+		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+	}
+
+	if err := h.db.Create(&session).Error; err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	auth.SetSessionCookie(w, token, expiresAt)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(CurrentUserResponse{
+		ID:       user.ID,
+		Username: user.Username,
+		Role:     user.Role,
+		IsActive: user.IsActive,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode login response for %s: %v", user.Username, err)
+	}
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil && cookie.Value != "" {
+		h.db.Delete(&models.Session{}, "id = ?", cookie.Value)
+	}
+
+	auth.ClearSessionCookie(w)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	}); err != nil {
+		logging.Error.Printf("Failed to encode logout response: %v", err)
+	}
 }
 
 func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
@@ -1060,16 +1557,322 @@ func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CurrentUserResponse{
+	if err := json.NewEncoder(w).Encode(CurrentUserResponse{
 		ID:       user.ID,
 		Username: user.Username,
 		Role:     user.Role,
-	})
+		IsActive: user.IsActive,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode current user response for %s: %v", user.Username, err)
+	}
+}
+
+func (h *Handler) requireAdmin(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	if !user.IsActive {
+		http.Error(w, "Account is deactivated", http.StatusForbidden)
+		return nil, false
+	}
+	if user.Role != models.RoleAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return nil, false
+	}
+	return user, true
+}
+
+func userToAdminResponse(user models.User) AdminUserResponse {
+	var deactivatedAt *string
+	if user.DeactivatedAt != nil {
+		ts := user.DeactivatedAt.UTC().Format(time.RFC3339)
+		deactivatedAt = &ts
+	}
+	return AdminUserResponse{
+		ID:            user.ID,
+		Username:      user.Username,
+		Role:          user.Role,
+		IsActive:      user.IsActive,
+		CreatedAt:     user.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:     user.UpdatedAt.UTC().Format(time.RFC3339),
+		DeactivatedAt: deactivatedAt,
+	}
+}
+
+type CreateAdminUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+func (h *Handler) AdminListUsers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	query := h.db.Model(&models.User{})
+
+	switch status {
+	case "", "all":
+	case "active":
+		query = query.Where("is_active = ?", true)
+	case "inactive":
+		query = query.Where("is_active = ?", false)
+	default:
+		http.Error(w, "Invalid status filter", http.StatusBadRequest)
+		return
+	}
+
+	var users []models.User
+	if err := query.Order("id ASC").Find(&users).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list users: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]AdminUserResponse, 0, len(users))
+	for _, user := range users {
+		resp = append(resp, userToAdminResponse(user))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"users": resp,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode admin user list response: %v", err)
+	}
+}
+
+func (h *Handler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req CreateAdminUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || strings.TrimSpace(req.Password) == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	role := req.Role
+	if strings.TrimSpace(role) == "" {
+		role = models.RoleUser
+	}
+	role, err := useradmin.NormalizeRole(role)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var existing models.User
+	if err := h.db.Where("username = ?", req.Username).First(&existing).Error; err == nil {
+		http.Error(w, "Username already exists", http.StatusConflict)
+		return
+	}
+
+	passwordHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	user := models.User{
+		Username:     req.Username,
+		PasswordHash: passwordHash,
+		Role:         role,
+		IsActive:     true,
+	}
+	if err := h.db.Create(&user).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin create user response for %s: %v", user.Username, err)
+	}
+}
+
+type SetAdminUserRoleRequest struct {
+	Role string `json:"role"`
+}
+
+func (h *Handler) AdminSetUserRole(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req SetAdminUserRoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	role, err := useradmin.NormalizeRole(req.Role)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if user.Role == role {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+			logging.Error.Printf("Failed to encode admin set-role noop response for %s: %v", user.Username, err)
+		}
+		return
+	}
+	if err := useradmin.EnsureCanChangeRole(h.db, user, role); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	if err := h.db.Model(&user).Update("role", role).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update role: %v", err), http.StatusInternalServerError)
+		return
+	}
+	user.Role = role
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin set-role response for %s: %v", user.Username, err)
+	}
+}
+
+func (h *Handler) AdminDeactivateUser(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !user.IsActive {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+			logging.Error.Printf("Failed to encode admin deactivate noop response for %s: %v", user.Username, err)
+		}
+		return
+	}
+	if err := useradmin.EnsureCanDeactivate(h.db, user); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	now := time.Now().UTC()
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
+		"is_active":      false,
+		"deactivated_at": now,
+	}).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to deactivate user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
+
+	user.IsActive = false
+	user.DeactivatedAt = &now
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin deactivate response for %s: %v", user.Username, err)
+	}
+}
+
+func (h *Handler) AdminActivateUser(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if user.IsActive {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+			logging.Error.Printf("Failed to encode admin activate noop response for %s: %v", user.Username, err)
+		}
+		return
+	}
+
+	if err := h.db.Model(&user).Updates(map[string]interface{}{
+		"is_active":      true,
+		"deactivated_at": nil,
+	}).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to activate user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	user.IsActive = true
+	user.DeactivatedAt = nil
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin activate response for %s: %v", user.Username, err)
+	}
+}
+
+type ResetAdminUserPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+func (h *Handler) AdminSetUserPassword(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req ResetAdminUserPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Password) == "" {
+		http.Error(w, "password is required", http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	passwordHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Model(&user).Update("password_hash", passwordHash).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update password: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		logging.Error.Printf("Failed to encode admin password response for %s: %v", user.Username, err)
+	}
 }
 
 type CreatePersonaRequest struct {
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	Description string `json:"description"`
 }
 
 type PersonaResponse struct {
@@ -1077,6 +1880,7 @@ type PersonaResponse struct {
 	UserID      uint   `json:"user_id"`
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	Description string `json:"description"`
 	AvatarURL   string `json:"avatar_url"`
 	CreatedAt   string `json:"created_at"`
 }
@@ -1099,12 +1903,38 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Description = strings.TrimSpace(req.Description)
+
 	baseSlug := normalizeSlug(req.DisplayName)
 	if req.Slug != "" {
 		baseSlug = normalizeSlug(req.Slug)
 	}
+	if baseSlug == "" {
+		http.Error(w, "invalid slug/display_name", http.StatusBadRequest)
+		return
+	}
 
-	slug, err := h.ensureUniqueSlug(user.ID, baseSlug)
+	// If a matching slug exists but is soft-deleted for this user, restore it in place.
+	var deletedMatch models.Persona
+	if err := h.db.Unscoped().Where("user_id = ? AND slug = ?", user.ID, baseSlug).First(&deletedMatch).Error; err == nil && deletedMatch.DeletedAt.Valid {
+		deletedMatch.DisplayName = req.DisplayName
+		deletedMatch.Description = req.Description
+		deletedMatch.DeletedAt = gorm.DeletedAt{}
+		deletedMatch.UpdatedAt = time.Now()
+		if saveErr := h.db.Unscoped().Save(&deletedMatch).Error; saveErr != nil {
+			http.Error(w, fmt.Sprintf("Failed to restore persona: %v", saveErr), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(personaToResponse(deletedMatch)); err != nil {
+			logging.Error.Printf("Failed to encode restored persona response for %s: %v", deletedMatch.ID, err)
+		}
+		return
+	}
+
+	slug, err := h.ensureUniqueSlug(baseSlug)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create slug: %v", err), http.StatusInternalServerError)
 		return
@@ -1115,6 +1945,7 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 		UserID:      user.ID,
 		DisplayName: req.DisplayName,
 		Slug:        slug,
+		Description: req.Description,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -1126,7 +1957,9 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(personaToResponse(persona))
+	if err := json.NewEncoder(w).Encode(personaToResponse(persona)); err != nil {
+		logging.Error.Printf("Failed to encode create persona response for %s: %v", persona.ID, err)
+	}
 }
 
 func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
@@ -1148,14 +1981,17 @@ func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"personas": responses,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode list personas response: %v", err)
+	}
 }
 
 type UpdatePersonaRequest struct {
 	DisplayName *string `json:"display_name,omitempty"`
 	Slug        *string `json:"slug,omitempty"`
+	Description *string `json:"description,omitempty"`
 }
 
 func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1193,12 +2029,20 @@ func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaI
 
 	if req.Slug != nil {
 		newSlug := normalizeSlug(*req.Slug)
+		if newSlug == "" {
+			http.Error(w, "Invalid slug", http.StatusBadRequest)
+			return
+		}
 		existingPersona := models.Persona{}
-		if err := h.db.Where("user_id = ? AND slug = ? AND id != ?", user.ID, newSlug, personaID).First(&existingPersona).Error; err == nil {
+		if err := h.db.Unscoped().Where("slug = ? AND id != ?", newSlug, personaID).First(&existingPersona).Error; err == nil {
 			http.Error(w, "A persona with this slug already exists", http.StatusConflict)
 			return
 		}
 		persona.Slug = newSlug
+	}
+
+	if req.Description != nil {
+		persona.Description = strings.TrimSpace(*req.Description)
 	}
 
 	persona.UpdatedAt = time.Now()
@@ -1209,7 +2053,9 @@ func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaI
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(personaToResponse(persona))
+	if err := json.NewEncoder(w).Encode(personaToResponse(persona)); err != nil {
+		logging.Error.Printf("Failed to encode update persona response for %s: %v", persona.ID, err)
+	}
 }
 
 func (h *Handler) DeletePersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1241,9 +2087,11 @@ func (h *Handler) DeletePersona(w http.ResponseWriter, r *http.Request, personaI
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "deleted",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode delete persona response for %s: %v", personaID, err)
+	}
 }
 
 func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1270,7 +2118,9 @@ func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request, personaID s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(personaToResponse(persona))
+	if err := json.NewEncoder(w).Encode(personaToResponse(persona)); err != nil {
+		logging.Error.Printf("Failed to encode get persona response for %s: %v", persona.ID, err)
+	}
 }
 
 func avatarURL(avatarPath string) string {
@@ -1278,6 +2128,15 @@ func avatarURL(avatarPath string) string {
 		return ""
 	}
 	return "/media/" + avatarPath
+}
+
+func thumbnailURL(itemID string, thumb meta.Thumbnail) string {
+	base := "/media/" + itemID + "/" + thumb.StoragePath
+	version := strings.TrimSpace(thumb.Timestamp)
+	if version == "" {
+		return base
+	}
+	return base + "?v=" + url.QueryEscape(version)
 }
 
 // normalizeSlug converts a string to a URL-friendly slug
@@ -1300,14 +2159,14 @@ func normalizeSlug(s string) string {
 	return s
 }
 
-// ensureUniqueSlug ensures the slug is unique for the given user, appending -2, -3, etc. if needed
-func (h *Handler) ensureUniqueSlug(userID uint, baseSlug string) (string, error) {
+// ensureUniqueSlug ensures the slug is globally unique, appending -2, -3, etc. if needed.
+func (h *Handler) ensureUniqueSlug(baseSlug string) (string, error) {
 	slug := baseSlug
 	counter := 1
 
 	for {
 		var existing models.Persona
-		err := h.db.Where("user_id = ? AND slug = ?", userID, slug).First(&existing).Error
+		err := h.db.Unscoped().Where("slug = ?", slug).First(&existing).Error
 		if err == gorm.ErrRecordNotFound {
 			return slug, nil
 		}
@@ -1326,6 +2185,7 @@ func personaToResponse(p models.Persona) PersonaResponse {
 		UserID:      p.UserID,
 		DisplayName: p.DisplayName,
 		Slug:        p.Slug,
+		Description: p.Description,
 		AvatarURL:   avatarURL(p.AvatarPath),
 		CreatedAt:   p.CreatedAt.Format(time.RFC3339),
 	}
@@ -1363,12 +2223,19 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close avatar upload file for persona %s: %v", personaID, closeErr)
+		}
+	}()
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
 		http.Error(w, "Invalid file type: must be jpeg, png, or webp", http.StatusBadRequest)
 		return
+	}
+	if ext == ".jpeg" {
+		ext = ".jpg"
 	}
 
 	if header.Size > 5*1024*1024 {
@@ -1391,22 +2258,45 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 	}
 
 	if _, err := io.Copy(tmpFile, file); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close temp avatar file %s: %v", tmpPath, closeErr)
+		}
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp avatar file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to finalize avatar upload: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-	avatarPath := storage.AvatarPath(h.mediaRoot, user.ID, personaID)
+	avatarPath := storage.AvatarPathWithExt(h.mediaRoot, user.ID, personaID, ext)
 
 	if err := os.Rename(tmpPath, avatarPath); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp avatar file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to save avatar: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	relPath := storage.AvatarRelativePath(user.ID, personaID)
+	// Keep only one active avatar file to make updates deterministic.
+	avatarDir := storage.AvatarDir(h.mediaRoot, user.ID, personaID)
+	oldAvatarCandidates, globErr := filepath.Glob(filepath.Join(avatarDir, "avatar.*"))
+	if globErr == nil {
+		for _, candidate := range oldAvatarCandidates {
+			if candidate == avatarPath {
+				continue
+			}
+			if removeErr := os.Remove(candidate); removeErr != nil && !os.IsNotExist(removeErr) {
+				logging.Error.Printf("Failed to remove old avatar %s: %v", candidate, removeErr)
+			}
+		}
+	}
+
+	relPath := storage.AvatarRelativePathWithExt(user.ID, personaID, ext)
 	persona.AvatarPath = relPath
 	persona.UpdatedAt = time.Now()
 
@@ -1416,15 +2306,18 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(UploadAvatarResponse{
+	if err := json.NewEncoder(w).Encode(UploadAvatarResponse{
 		AvatarURL: avatarURL(relPath),
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode upload avatar response for %s: %v", personaID, err)
+	}
 }
 
 type ProfileResponse struct {
 	PersonaID   string `json:"persona_id"`
 	DisplayName string `json:"display_name"`
 	Slug        string `json:"slug"`
+	Description string `json:"description"`
 	AvatarURL   string `json:"avatar_url"`
 	CreatedAt   string `json:"created_at"`
 	Counts      struct {
@@ -1454,6 +2347,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 		PersonaID:   persona.ID,
 		DisplayName: persona.DisplayName,
 		Slug:        persona.Slug,
+		Description: persona.Description,
 		AvatarURL:   avatarURL(persona.AvatarPath),
 		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
 	}
@@ -1461,7 +2355,9 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 	resp.Counts.Shorts = shortCount
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logging.Error.Printf("Failed to encode profile response for %s: %v", slug, err)
+	}
 }
 
 type ProfileItemResponse struct {
@@ -1517,7 +2413,7 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 
 	searchQuery := r.URL.Query().Get("q")
 	if searchQuery != "" {
-		query = query.Where("title ILIKE ?", "%"+searchQuery+"%")
+		query = query.Where("LOWER(title) LIKE LOWER(?)", "%"+searchQuery+"%")
 	}
 
 	highlighted := r.URL.Query().Get("highlighted")
@@ -1582,7 +2478,7 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 					}
 				}
 				if len(assetsMeta.Thumbnails) > 0 {
-					resp.ThumbURL = "/media/" + item.ID + "/" + assetsMeta.Thumbnails[0].StoragePath
+					resp.ThumbURL = thumbnailURL(item.ID, assetsMeta.Thumbnails[0])
 				}
 			}
 		}
@@ -1597,11 +2493,13 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ProfileItemsResponse{
+	if err := json.NewEncoder(w).Encode(ProfileItemsResponse{
 		Items:      responses,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode profile items response for %s: %v", slug, err)
+	}
 }
 
 type ProfileShortResponse struct {
@@ -1680,7 +2578,7 @@ func (h *Handler) GetProfileShorts(w http.ResponseWriter, r *http.Request, slug 
 		thumbURL := ""
 		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, clip.ItemID)
 		if assetsMeta != nil && len(assetsMeta.Thumbnails) > 0 {
-			thumbURL = "/media/" + clip.ItemID + "/" + assetsMeta.Thumbnails[0].StoragePath
+			thumbURL = thumbnailURL(clip.ItemID, assetsMeta.Thumbnails[0])
 		}
 
 		videoURL := ""
@@ -1705,9 +2603,11 @@ func (h *Handler) GetProfileShorts(w http.ResponseWriter, r *http.Request, slug 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ProfileShortsResponse{
+	if err := json.NewEncoder(w).Encode(ProfileShortsResponse{
 		Shorts:     responses,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode profile shorts response for %s: %v", slug, err)
+	}
 }

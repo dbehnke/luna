@@ -58,14 +58,26 @@ const (
 
 // User represents a user account
 type User struct {
-	ID           uint           `gorm:"primaryKey" json:"id"`
-	Username     string         `gorm:"uniqueIndex;size:255;not null" json:"username"`
-	PasswordHash string         `gorm:"size:255;not null" json:"-"`
-	Role         string         `gorm:"size:50;default:user" json:"role"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-	Personas     []Persona      `gorm:"foreignKey:UserID" json:"personas,omitempty"`
+	ID            uint           `gorm:"primaryKey" json:"id"`
+	Username      string         `gorm:"uniqueIndex;size:255;not null" json:"username"`
+	PasswordHash  string         `gorm:"size:255;not null" json:"-"`
+	Role          string         `gorm:"size:50;default:user" json:"role"`
+	IsActive      bool           `gorm:"not null;default:true;index" json:"is_active"`
+	DeactivatedAt *time.Time     `json:"deactivated_at,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	Personas      []Persona      `gorm:"foreignKey:UserID" json:"personas,omitempty"`
+}
+
+// Session represents an authenticated browser session.
+type Session struct {
+	ID        string    `gorm:"primaryKey;size:128" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"user_id"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	User      User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
 
 // Persona represents a character that a user can upload as
@@ -74,6 +86,7 @@ type Persona struct {
 	UserID      uint           `gorm:"index;not null" json:"user_id"`
 	DisplayName string         `gorm:"size:255;not null" json:"display_name"`
 	Slug        string         `gorm:"size:255;not null;uniqueIndex:idx_persona_user_slug" json:"slug"`
+	Description string         `gorm:"type:text" json:"description"`
 	AvatarPath  string         `gorm:"size:512" json:"avatar_path"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
@@ -147,6 +160,26 @@ type Favorite struct {
 	UserID    uint      `gorm:"uniqueIndex:idx_favorite_user_item;not null" json:"user_id"`
 	ItemID    string    `gorm:"uniqueIndex:idx_favorite_user_item;index;not null" json:"item_id"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Playlist represents a user-owned ordered media collection.
+type Playlist struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	UserID    uint           `gorm:"index;not null" json:"user_id"`
+	Name      string         `gorm:"size:255;not null" json:"name"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// PlaylistItem represents one media item inside a playlist at a stable position.
+type PlaylistItem struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	PlaylistID uint      `gorm:"uniqueIndex:idx_playlist_item;index;not null" json:"playlist_id"`
+	ItemID     string    `gorm:"uniqueIndex:idx_playlist_item;index;not null;size:26" json:"item_id"`
+	Position   int       `gorm:"index;not null" json:"position"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // SchemaVersion stores the current schema version for migrations

@@ -1,51 +1,97 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import LandingView from '../views/LandingView.vue'
-import UploadView from '../views/UploadView.vue'
-import LibraryView from '../views/LibraryView.vue'
-import ItemView from '../views/ItemView.vue'
-import ShortsView from '../views/ShortsView.vue'
-import PersonasView from '../views/PersonasView.vue'
-import ProfileView from '../views/ProfileView.vue'
+import { createRouter, createWebHistory } from "vue-router";
+import { getCurrentUser } from "../services/api";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
-      path: '/',
-      name: 'home',
-      component: LandingView
+      path: "/login",
+      name: "login",
+      component: () => import("../views/LoginView.vue"),
     },
     {
-      path: '/upload',
-      name: 'upload',
-      component: UploadView
+      path: "/",
+      name: "home",
+      component: () => import("../views/LandingView.vue"),
     },
     {
-      path: '/library',
-      name: 'library',
-      component: LibraryView
+      path: "/upload",
+      name: "upload",
+      component: () => import("../views/UploadView.vue"),
     },
     {
-      path: '/item/:id',
-      name: 'item',
-      component: ItemView
+      path: "/library",
+      name: "library",
+      component: () => import("../views/LibraryView.vue"),
     },
     {
-      path: '/shorts',
-      name: 'shorts',
-      component: ShortsView
+      path: "/item/:id",
+      name: "item",
+      component: () => import("../views/ItemView.vue"),
     },
     {
-      path: '/personas',
-      name: 'personas',
-      component: PersonasView
+      path: "/watch/:id",
+      name: "watch",
+      component: () => import("../views/ItemView.vue"),
     },
     {
-      path: '/@:slug',
-      name: 'profile',
-      component: ProfileView
-    }
-  ]
-})
+      path: "/shorts",
+      name: "shorts",
+      component: () => import("../views/ShortsView.vue"),
+    },
+    {
+      path: "/playlists",
+      name: "playlists",
+      component: () => import("../views/PlaylistsView.vue"),
+    },
+    {
+      path: "/trash",
+      name: "trash",
+      component: () => import("../views/TrashView.vue"),
+    },
+    {
+      path: "/personas",
+      name: "personas",
+      redirect: "/me/profile",
+    },
+    {
+      path: "/me/profile",
+      name: "account-profile",
+      component: () => import("../views/AccountView.vue"),
+    },
+    {
+      path: "/@:slug",
+      name: "profile",
+      component: () => import("../views/ProfileView.vue"),
+    },
+    {
+      path: "/admin/users",
+      name: "admin-users",
+      component: () => import("../views/AdminUsersView.vue"),
+      meta: { requiresAdmin: true },
+    },
+  ],
+});
 
-export default router
+router.beforeEach(async (to) => {
+  const isLoginRoute = to.name === "login";
+  const user = await getCurrentUser();
+
+  if (!user && !isLoginRoute) {
+    return { name: "login", query: { redirect: to.fullPath } };
+  }
+
+  if (user && isLoginRoute) {
+    return { name: "home" };
+  }
+
+  if (to.matched.some((record) => record.meta?.requiresAdmin)) {
+    if (!user || user.role !== "admin") {
+      return { name: "home" };
+    }
+  }
+
+  return true;
+});
+
+export default router;

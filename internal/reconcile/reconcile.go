@@ -438,6 +438,7 @@ func recreateDBRowFromMeta(db *gorm.DB, mediaRoot, itemID string) error {
 		user = models.User{
 			Username: itemMeta.OwnerUsername,
 			Role:     models.RoleUser,
+			IsActive: true,
 		}
 		if err := db.Create(&user).Error; err != nil {
 			return fmt.Errorf("create user: %w", err)

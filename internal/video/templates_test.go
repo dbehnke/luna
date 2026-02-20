@@ -151,7 +151,8 @@ func TestClipTranscodeArgs_HasCropTo9_16(t *testing.T) {
 	for i, arg := range args {
 		if arg == "-vf" {
 			vf := args[i+1]
-			if strings.Contains(vf, "crop=ih*(9/16)") {
+			if strings.Contains(vf, "crop=if(gte(iw/ih") &&
+				strings.Contains(vf, ":(iw-ow)/2:(ih-oh)/2") {
 				found = true
 			}
 		}
