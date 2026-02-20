@@ -68,6 +68,16 @@ type User struct {
 	Personas     []Persona      `gorm:"foreignKey:UserID" json:"personas,omitempty"`
 }
 
+// Session represents an authenticated browser session.
+type Session struct {
+	ID        string    `gorm:"primaryKey;size:128" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"user_id"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	User      User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
+
 // Persona represents a character that a user can upload as
 type Persona struct {
 	ID          string         `gorm:"primaryKey;size:26" json:"id"`

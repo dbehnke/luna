@@ -36,6 +36,7 @@ func New(cfg *config.Config) (*DB, error) {
 func (d *DB) AutoMigrate() error {
 	return d.DB.AutoMigrate(
 		&models.User{},
+		&models.Session{},
 		&models.Persona{},
 		&models.MediaItem{},
 		&models.Job{},

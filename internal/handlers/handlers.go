@@ -1079,6 +1079,86 @@ type CurrentUserResponse struct {
 	Role     string `json:"role"`
 }
 
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("username = ?", req.Username).First(&user).Error; err != nil {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	if !auth.VerifyPassword(req.Password, user.PasswordHash) {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	token, err := auth.NewSessionToken()
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	expiresAt := time.Now().UTC().Add(auth.SessionDuration)
+	session := models.Session{
+		ID:        token,
+		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+	}
+
+	if err := h.db.Create(&session).Error; err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	auth.SetSessionCookie(w, token, expiresAt)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(CurrentUserResponse{
+		ID:       user.ID,
+		Username: user.Username,
+		Role:     user.Role,
+	})
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil && cookie.Value != "" {
+		h.db.Delete(&models.Session{}, "id = ?", cookie.Value)
+	}
+
+	auth.ClearSessionCookie(w)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
+}
+
 func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	user := auth.GetUser(r.Context())
 	if user == nil {
