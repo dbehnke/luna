@@ -62,16 +62,17 @@ type SourceInfo struct {
 }
 
 type Asset struct {
-	Kind        string `json:"kind"` // master_mp4, short_clip, preview_mp4
-	StoragePath string `json:"storage_path"`
-	Width       int    `json:"width,omitempty"`
-	Height      int    `json:"height,omitempty"`
-	Bitrate     string `json:"bitrate,omitempty"`
-	Codecs      string `json:"codecs,omitempty"`
-	ClipID      string `json:"clip_id,omitempty"`
-	StartMs     int64  `json:"start_ms,omitempty"`
-	EndMs       int64  `json:"end_ms,omitempty"`
-	CropMode    string `json:"crop_mode,omitempty"`
+	Kind        string       `json:"kind"` // master_mp4, short_clip, preview_mp4, hls
+	StoragePath string       `json:"storage_path"`
+	Width       int          `json:"width,omitempty"`
+	Height      int          `json:"height,omitempty"`
+	Bitrate     string       `json:"bitrate,omitempty"`
+	Codecs      string       `json:"codecs,omitempty"`
+	ClipID      string       `json:"clip_id,omitempty"`
+	StartMs     int64        `json:"start_ms,omitempty"`
+	EndMs       int64        `json:"end_ms,omitempty"`
+	CropMode    string       `json:"crop_mode,omitempty"`
+	Variants    []HLSVariant `json:"variants,omitempty"`
 }
 
 type Thumbnail struct {
@@ -84,6 +85,11 @@ type Photo struct {
 	StoragePath string `json:"storage_path"`
 	Width       int    `json:"width,omitempty"`
 	Height      int    `json:"height,omitempty"`
+}
+
+type HLSVariant struct {
+	Height    int `json:"height"`
+	Bandwidth int `json:"bandwidth"`
 }
 
 func WriteFileAtomic(path string, data []byte) error {

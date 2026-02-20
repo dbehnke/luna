@@ -163,3 +163,100 @@ func ContainsSubstring(args []string, substr string) bool {
 	}
 	return false
 }
+
+// HLSVariant represents a single HLS variant stream.
+type HLSVariant struct {
+	Height    int
+	Bandwidth int
+}
+
+// DefaultHLSVariants returns the default HLS variant ladder.
+func DefaultHLSVariants() []HLSVariant {
+	return []HLSVariant{
+		{Height: 360, Bandwidth: 800000},
+		{Height: 720, Bandwidth: 2500000},
+		{Height: 1080, Bandwidth: 5000000},
+	}
+}
+
+// HLSArgs builds ffmpeg arguments for generating HLS adaptive streaming.
+//
+// For simplicity, this creates a single variant based on source resolution.
+// Multi-variant support can be added later with filter_complex.
+func HLSArgs(inPath string, outDir string, variants []HLSVariant, sourceWidth, sourceHeight int) []string {
+	if len(variants) == 0 {
+		variants = DefaultHLSVariants()
+	}
+
+	filteredVariants := []HLSVariant{}
+	for _, v := range variants {
+		if v.Height <= sourceHeight {
+			filteredVariants = append(filteredVariants, v)
+		}
+	}
+
+	if len(filteredVariants) == 0 {
+		filteredVariants = []HLSVariant{{Height: sourceHeight, Bandwidth: 2500000}}
+	}
+
+	numVariants := len(filteredVariants)
+
+	if numVariants == 1 {
+		v := filteredVariants[0]
+		return []string{
+			"-y",
+			"-i", inPath,
+			"-c:v", "libx264",
+			"-preset", "medium",
+			"-crf", "23",
+			"-c:a", "aac",
+			"-b:a", "128k",
+			"-vf", fmt.Sprintf("scale=-2:%d", v.Height),
+			"-f", "hls",
+			"-hls_time", "6",
+			"-hls_playlist_type", "vod",
+			"-hls_segment_filename", fmt.Sprintf("%s/seg_%%03d.ts", outDir),
+			"-hls_list_size", "0",
+			"-master_pl_name", "index.m3u8",
+			fmt.Sprintf("%s/playlist.m3u8", outDir),
+		}
+	}
+
+	args := []string{"-y", "-i", inPath}
+
+	scaleExprs := make([]string, numVariants)
+	varStreamMap := make([]string, numVariants)
+	segmentFiles := make([]string, numVariants)
+	playlistFiles := make([]string, numVariants)
+
+	for i, v := range filteredVariants {
+		scaleExprs[i] = fmt.Sprintf("scale=-2:%d", v.Height)
+		varStreamMap[i] = fmt.Sprintf("v:%d,a:%d", i, i)
+		segmentFiles[i] = fmt.Sprintf("%s/v%d_%%03d.ts", outDir, i)
+		playlistFiles[i] = fmt.Sprintf("%s/v%d.m3u8", outDir, i)
+		args = append(args, "-filter_complex", fmt.Sprintf("[0:v]scale=-2:%d[v%d]", v.Height, i))
+	}
+
+	for i, v := range filteredVariants {
+		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
+		args = append(args, "-map", "0:a")
+		args = append(args, "-c:v", "libx264")
+		args = append(args, "-preset", "medium")
+		args = append(args, "-crf", "23")
+		args = append(args, "-b:v", fmt.Sprintf("%dk", v.Bandwidth/1000))
+		args = append(args, "-c:a", "aac")
+		args = append(args, "-b:a", "128k")
+		args = append(args, "-f", "hls")
+		args = append(args, "-hls_time", "6")
+		args = append(args, "-hls_playlist_type", "vod")
+		args = append(args, "-hls_segment_filename", segmentFiles[i])
+		args = append(args, "-hls_list_size", "0")
+		args = append(args, "-var_stream_map", varStreamMap[i])
+		if i == 0 {
+			args = append(args, "-master_pl_name", "index.m3u8")
+		}
+		args = append(args, playlistFiles[i])
+	}
+
+	return args
+}

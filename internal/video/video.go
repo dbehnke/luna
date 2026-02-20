@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"luna/internal/id"
 	"luna/internal/meta"
 )
 
@@ -440,6 +441,100 @@ func (p *Processor) ProcessClip(itemID, clipID string, startMs, endMs int64) err
 		Width:       ClipWidth,
 		Height:      ClipHeight,
 	})
+
+	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
+		return fmt.Errorf("write assets meta: %w", err)
+	}
+
+	return nil
+}
+
+func (p *Processor) ProcessHLS(itemID string) error {
+	inputPath := filepath.Join(p.mediaRoot, "items", itemID, "derived", "master.mp4")
+	if _, err := os.Stat(inputPath); err != nil {
+		return fmt.Errorf("master file not found: %w", err)
+	}
+
+	assetsMeta, err := meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
+	if err != nil {
+		return fmt.Errorf("read assets meta: %w", err)
+	}
+
+	if assetsMeta == nil || assetsMeta.SourceInfo == nil {
+		return fmt.Errorf("no source info found, transcode may not have completed")
+	}
+
+	sourceWidth := assetsMeta.SourceInfo.Width
+	sourceHeight := assetsMeta.SourceInfo.Height
+
+	hlsDir := filepath.Join(p.mediaRoot, "items", itemID, "derived", "hls")
+	tmpDir := hlsDir + "_tmp_" + id.NewULID()
+
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		return fmt.Errorf("create hls tmp dir: %w", err)
+	}
+
+	variants := DefaultHLSVariants()
+	args := HLSArgs(inputPath, tmpDir, variants, sourceWidth, sourceHeight)
+
+	cmd := exec.Command("ffmpeg", args...)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(tmpDir)
+		return fmt.Errorf("ffmpeg hls failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	indexPath := filepath.Join(tmpDir, "index.m3u8")
+	if _, err := os.Stat(indexPath); err != nil {
+		os.RemoveAll(tmpDir)
+		return fmt.Errorf("hls index.m3u8 not created: %w", err)
+	}
+
+	if err := os.Rename(tmpDir, hlsDir); err != nil {
+		os.RemoveAll(tmpDir)
+		return fmt.Errorf("rename hls dir: %w", err)
+	}
+
+	hlsVariants := []meta.HLSVariant{}
+	for _, v := range variants {
+		if v.Height <= sourceHeight {
+			hlsVariants = append(hlsVariants, meta.HLSVariant{
+				Height:    v.Height,
+				Bandwidth: v.Bandwidth,
+			})
+		}
+	}
+
+	assetsMeta, err = meta.ReadAssetsMetaByID(p.mediaRoot, itemID)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read assets meta: %w", err)
+	}
+	if assetsMeta == nil {
+		assetsMeta = &meta.AssetsMeta{Schema: meta.SchemaVersion}
+	}
+
+	hlsFound := false
+	for i := range assetsMeta.Assets {
+		if assetsMeta.Assets[i].Kind == "hls" {
+			assetsMeta.Assets[i] = meta.Asset{
+				Kind:        "hls",
+				StoragePath: "derived/hls/index.m3u8",
+				Variants:    hlsVariants,
+			}
+			hlsFound = true
+			break
+		}
+	}
+	if !hlsFound {
+		assetsMeta.Assets = append(assetsMeta.Assets, meta.Asset{
+			Kind:        "hls",
+			StoragePath: "derived/hls/index.m3u8",
+			Variants:    hlsVariants,
+		})
+	}
 
 	if err := meta.WriteAssetsMetaAtomic(p.mediaRoot, itemID, assetsMeta); err != nil {
 		return fmt.Errorf("write assets meta: %w", err)

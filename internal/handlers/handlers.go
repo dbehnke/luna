@@ -54,6 +54,7 @@ type MediaItemResponse struct {
 	MediaURL         string   `json:"media_url,omitempty"`
 	ProcessingStatus string   `json:"processing_status,omitempty"`
 	MasterURL        string   `json:"master_url,omitempty"`
+	HLSURL           string   `json:"hls_url,omitempty"`
 	ThumbURLs        []string `json:"thumb_urls,omitempty"`
 	ErrorMessage     string   `json:"error_message,omitempty"`
 	DeletedAt        *string  `json:"deleted_at,omitempty"`
@@ -337,7 +338,9 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 				for _, asset := range assetsMeta.Assets {
 					if asset.Kind == "master_mp4" {
 						resp.MasterURL = "/media/" + item.ID + "/" + asset.StoragePath
-						break
+					}
+					if asset.Kind == "hls" {
+						resp.HLSURL = "/media/" + item.ID + "/" + asset.StoragePath
 					}
 				}
 				if len(assetsMeta.Thumbnails) > 0 {
@@ -409,7 +412,9 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 			for _, asset := range assetsMeta.Assets {
 				if asset.Kind == "master_mp4" {
 					resp.MasterURL = "/media/" + item.ID + "/" + asset.StoragePath
-					break
+				}
+				if asset.Kind == "hls" {
+					resp.HLSURL = "/media/" + item.ID + "/" + asset.StoragePath
 				}
 			}
 

@@ -26,11 +26,13 @@
         <div class="aspect-video bg-black flex items-center justify-center relative">
           <video
             v-if="item.type === 'video' && (item.master_url || item.media_url)"
+            ref="videoElement"
             controls
             playsinline
             class="max-h-full"
           >
-            <source :src="item.master_url || item.media_url" />
+            <source v-if="!hlsPlayer && item.hls_url" :src="item.hls_url" />
+            <source v-else-if="item.master_url" :src="item.master_url" />
             Your browser does not support video playback.
           </video>
           <div
@@ -70,6 +72,18 @@
               ]"
             >
               {{ item.processing_status }}
+            </span>
+            <span
+              v-if="item.hls_url"
+              class="px-2 py-1 rounded text-xs font-medium bg-blue-600 text-white"
+            >
+              Streaming optimized
+            </span>
+            <span
+              v-else-if="item.type === 'video' && item.processing_status === 'ready' && !item.hls_url"
+              class="px-2 py-1 rounded text-xs font-medium bg-yellow-600 text-white"
+            >
+              Optimizing stream...
             </span>
           </div>
           <div class="flex items-center gap-4 mb-4">
@@ -187,8 +201,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import Hls from 'hls.js'
 import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
@@ -204,6 +219,64 @@ const clipStart = ref(0)
 const clipEnd = ref(10)
 const clipCreating = ref(false)
 const clipError = ref('')
+const videoElement = ref(null)
+const hlsPlayer = ref(null)
+
+function initHLS() {
+  if (!videoElement.value || !item.value?.hls_url) {
+    return
+  }
+
+  if (Hls.isSupported()) {
+    if (hlsPlayer.value) {
+      hlsPlayer.value.destroy()
+    }
+    const hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: false,
+    })
+    hls.loadSource(item.value.hls_url)
+    hls.attachMedia(videoElement.value)
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      console.log('HLS manifest loaded')
+    })
+    hls.on(Hls.Events.ERROR, (event, data) => {
+      console.error('HLS error:', data)
+      if (data.fatal) {
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            console.log('Fatal network error, trying to recover...')
+            hls.startLoad()
+            break
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            console.log('Fatal media error, trying to recover...')
+            hls.recoverMediaError()
+            break
+          default:
+            console.log('Fatal error, destroying hls player')
+            hls.destroy()
+            hlsPlayer.value = null
+            break
+        }
+      }
+    })
+    hlsPlayer.value = hls
+  } else if (videoElement.value.canPlayType('application/vnd.apple.mpegurl')) {
+    videoElement.value.src = item.value.hls_url
+  }
+}
+
+watch(() => item.value?.hls_url, () => {
+  initHLS()
+})
+
+onMounted(loadItem)
+onUnmounted(() => {
+  if (hlsPlayer.value) {
+    hlsPlayer.value.destroy()
+    hlsPlayer.value = null
+  }
+})
 
 async function loadItem() {
   loading.value = true

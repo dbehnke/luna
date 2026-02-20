@@ -14,6 +14,18 @@ var (
 	ErrPathEscapesRoot = errors.New("path escapes media root")
 )
 
+var extContentTypes = map[string]string{
+	".m3u8": "application/vnd.apple.mpegurl",
+	".ts":   "video/MP2T",
+	".mp4":  "video/mp4",
+	".webm": "video/webm",
+	".webp": "image/webp",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".gif":  "image/gif",
+}
+
 type MediaHandler struct {
 	mediaRoot  string
 	itemsDir   string
@@ -86,6 +98,14 @@ func (h *MediaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if info.IsDir() {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(absFilePath))
+	if contentType, ok := extContentTypes[ext]; ok {
+		w.Header().Set("Content-Type", contentType)
+		if ext == ".m3u8" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 	}
 
 	http.ServeFile(w, r, absFilePath)

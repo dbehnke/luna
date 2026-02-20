@@ -33,6 +33,11 @@ type ClipPayload struct {
 	EndMs   int64  `json:"end_ms"`
 }
 
+// HLSPayload for HLS jobs
+type HLSPayload struct {
+	ItemID string `json:"item_id"`
+}
+
 // Backoff schedule for retries
 var BackoffSchedule = []time.Duration{
 	5 * time.Second,
@@ -226,6 +231,12 @@ func GetJobPayload(job *models.Job) (interface{}, error) {
 		return payload, nil
 	case models.JobTypeClip:
 		var payload ClipPayload
+		if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	case models.JobTypeHLS:
+		var payload HLSPayload
 		if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
 			return nil, err
 		}

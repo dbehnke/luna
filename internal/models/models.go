@@ -27,6 +27,14 @@ const (
 	JobTypePhotoThumb = "photo_thumb"
 	JobTypeCleanup    = "cleanup"
 	JobTypeWriteMeta  = "write_meta"
+	JobTypeHLS        = "hls"
+)
+
+// HLSStatus constants
+const (
+	HLSStatusPending = "pending"
+	HLSStatusReady   = "ready"
+	HLSStatusFailed  = "failed"
 )
 
 // JobStatus constants
@@ -71,18 +79,20 @@ type Persona struct {
 
 // MediaItem represents a video or photo
 type MediaItem struct {
-	ID            string         `gorm:"primaryKey;size:26" json:"id"` // ULID string
-	UserID        uint           `gorm:"index;not null" json:"user_id"`
-	PersonaID     *string        `gorm:"index" json:"persona_id"`
-	Type          string         `gorm:"size:50;not null;index" json:"type"` // video or photo
-	Title         string         `gorm:"size:500;not null" json:"title"`
-	Description   string         `gorm:"type:text" json:"description"`
-	IsHighlighted bool           `gorm:"default:false" json:"is_highlighted"`
-	CreatedAt     time.Time      `gorm:"index" json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	User          User           `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	Persona       *Persona       `gorm:"foreignKey:PersonaID" json:"persona,omitempty"`
+	ID             string         `gorm:"primaryKey;size:26" json:"id"` // ULID string
+	UserID         uint           `gorm:"index;not null" json:"user_id"`
+	PersonaID      *string        `gorm:"index" json:"persona_id"`
+	Type           string         `gorm:"size:50;not null;index" json:"type"` // video or photo
+	Title          string         `gorm:"size:500;not null" json:"title"`
+	Description    string         `gorm:"type:text" json:"description"`
+	IsHighlighted  bool           `gorm:"default:false" json:"is_highlighted"`
+	HLSStatus      string         `gorm:"size:50;default:pending" json:"hls_status"`
+	HLSDerivedPath string         `gorm:"size:512" json:"hls_derived_path"`
+	CreatedAt      time.Time      `gorm:"index" json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	User           User           `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Persona        *Persona       `gorm:"foreignKey:PersonaID" json:"persona,omitempty"`
 }
 
 // Job represents a background processing job
