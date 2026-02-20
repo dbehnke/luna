@@ -56,6 +56,7 @@ func main() {
 			importCommand(cfg),
 			rebuildDBCommand(cfg),
 			userCommand(cfg),
+			itemCommand(cfg),
 			doctorCommand(cfg),
 			reconcileCommand(cfg),
 			snapshotCommand(cfg),
@@ -143,6 +144,11 @@ func serveCommand(cfg *config.Config) *cli.Command {
 					} else {
 						h.ListItems(w, r)
 					}
+					return
+				}
+
+				if path == "/api/items/trash" && r.Method == "GET" {
+					h.ListTrashItems(w, r)
 					return
 				}
 
@@ -257,6 +263,12 @@ func serveCommand(cfg *config.Config) *cli.Command {
 						return
 					}
 
+					if r.Method == "POST" && strings.HasSuffix(id, "/restore") {
+						id = strings.TrimSuffix(id, "/restore")
+						h.RestoreItem(w, r, id)
+						return
+					}
+
 					if r.Method == "POST" && strings.HasSuffix(id, "/clip") {
 						id = strings.TrimSuffix(id, "/clip")
 						h.CreateClip(w, r, id)
@@ -293,6 +305,11 @@ func serveCommand(cfg *config.Config) *cli.Command {
 					}
 
 					if r.Method == "DELETE" {
+						if strings.HasSuffix(id, "/purge") {
+							id = strings.TrimSuffix(id, "/purge")
+							h.PurgeItemAdmin(w, r, id)
+							return
+						}
 						h.DeleteItem(w, r, id)
 						return
 					}
@@ -455,6 +472,129 @@ func userCommand(cfg *config.Config) *cli.Command {
 			userActivateCommand(cfg),
 			userPasswdCommand(cfg),
 			userPurgeCommand(cfg),
+		},
+	}
+}
+
+func itemCommand(cfg *config.Config) *cli.Command {
+	return &cli.Command{
+		Name:  "item",
+		Usage: "Manage media items",
+		Commands: []*cli.Command{
+			itemPurgeCommand(cfg),
+		},
+	}
+}
+
+func itemPurgeCommand(cfg *config.Config) *cli.Command {
+	var itemID string
+	var execute bool
+	var confirm string
+
+	return &cli.Command{
+		Name:  "purge",
+		Usage: "Permanently remove a soft-deleted item and all associated records (default: dry-run)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "id", Required: true, Destination: &itemID},
+			&cli.BoolFlag{Name: "execute", Destination: &execute},
+			&cli.StringFlag{Name: "confirm", Destination: &confirm},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			itemID = strings.TrimSpace(itemID)
+			if itemID == "" {
+				return fmt.Errorf("item id is required")
+			}
+
+			database, err := openDBAndMigrate(cfg)
+			if err != nil {
+				return err
+			}
+			defer closeDB(database)
+
+			var item models.MediaItem
+			if err := database.Unscoped().Where("id = ?", itemID).First(&item).Error; err != nil {
+				return fmt.Errorf("find item %q: %w", itemID, err)
+			}
+			if !item.DeletedAt.Valid {
+				return fmt.Errorf("item %q must be soft-deleted before purge", itemID)
+			}
+
+			var reactionCount int64
+			if err := database.Model(&models.Reaction{}).Where("item_id = ?", itemID).Count(&reactionCount).Error; err != nil {
+				return fmt.Errorf("count reactions: %w", err)
+			}
+			var favoriteCount int64
+			if err := database.Model(&models.Favorite{}).Where("item_id = ?", itemID).Count(&favoriteCount).Error; err != nil {
+				return fmt.Errorf("count favorites: %w", err)
+			}
+			var clipCount int64
+			if err := database.Unscoped().Model(&models.ClipAsset{}).Where("item_id = ?", itemID).Count(&clipCount).Error; err != nil {
+				return fmt.Errorf("count clips: %w", err)
+			}
+			var playlistRefCount int64
+			if err := database.Model(&models.PlaylistItem{}).Where("item_id = ?", itemID).Count(&playlistRefCount).Error; err != nil {
+				return fmt.Errorf("count playlist refs: %w", err)
+			}
+			var jobCount int64
+			if err := database.Model(&models.Job{}).Where("payload_json LIKE ?", "%"+itemID+"%").Count(&jobCount).Error; err != nil {
+				return fmt.Errorf("count jobs: %w", err)
+			}
+			itemDir := filepath.Join(cfg.MediaRoot, "items", itemID)
+			size, err := dirSize(itemDir)
+			if err != nil {
+				return fmt.Errorf("measure item directory: %w", err)
+			}
+
+			fmt.Printf("Purge summary for item %q\n", itemID)
+			fmt.Printf("  title: %s\n", item.Title)
+			fmt.Printf("  type: %s\n", item.Type)
+			fmt.Printf("  owner_user_id: %d\n", item.UserID)
+			fmt.Printf("  deleted_at: %s\n", item.DeletedAt.Time.UTC().Format(time.RFC3339))
+			fmt.Printf("  reactions: %d\n", reactionCount)
+			fmt.Printf("  favorites: %d\n", favoriteCount)
+			fmt.Printf("  clip_assets: %d\n", clipCount)
+			fmt.Printf("  playlist_refs: %d\n", playlistRefCount)
+			fmt.Printf("  jobs_matching_item: %d\n", jobCount)
+			fmt.Printf("  estimated_item_bytes: %d\n", size)
+
+			if !execute {
+				fmt.Println("Dry-run only. Re-run with --execute --confirm <item_id> to apply purge.")
+				return nil
+			}
+			if strings.TrimSpace(confirm) != itemID {
+				return fmt.Errorf("confirmation mismatch: set --confirm %s", itemID)
+			}
+
+			if err := database.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Where("item_id = ?", itemID).Delete(&models.Reaction{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("item_id = ?", itemID).Delete(&models.Favorite{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("item_id = ?", itemID).Delete(&models.PlaylistItem{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Unscoped().Where("item_id = ?", itemID).Delete(&models.ClipAsset{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("payload_json LIKE ?", "%"+itemID+"%").Delete(&models.Job{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Unscoped().Delete(&models.MediaItem{}, "id = ?", itemID).Error; err != nil {
+					return err
+				}
+				return nil
+			}); err != nil {
+				return fmt.Errorf("purge item records: %w", err)
+			}
+
+			if err := os.RemoveAll(itemDir); err != nil {
+				return fmt.Errorf("remove item directory %s: %w", itemDir, err)
+			}
+
+			fmt.Printf("Purged item %q and associated content.\n", itemID)
+			return nil
 		},
 	}
 }
