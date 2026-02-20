@@ -2,9 +2,9 @@
   <div class="min-h-screen bg-[#07182c] flex flex-col">
     <!-- Top bar with logo icon -->
     <header class="p-4">
-      <img 
-        :src="lunaMark" 
-        alt="Luna" 
+      <img
+        :src="lunaMark"
+        alt="Luna"
         class="w-12 h-12"
       />
     </header>
@@ -12,15 +12,15 @@
     <!-- Main content -->
     <main class="flex-1 flex flex-col items-center justify-center px-4">
       <!-- Full logo -->
-      <img 
-        :src="lunaLogo" 
-        alt="Luna" 
+      <img
+        :src="lunaLogo"
+        alt="Luna"
         class="w-full max-w-md mb-8"
       />
-      
+
       <!-- App name -->
       <h1 class="text-4xl font-bold text-white mb-2">Luna</h1>
-      
+
       <!-- Tagline -->
       <p class="text-xl text-gray-400 mb-8">Moments live here</p>
 
@@ -50,6 +50,13 @@
         >
           Personas
         </router-link>
+        <router-link
+          v-if="isAdmin"
+          to="/admin/users"
+          class="px-6 py-3 bg-emerald-700 hover:bg-emerald-600 text-white font-medium rounded-lg transition-colors"
+        >
+          Admin
+        </router-link>
       </div>
     </main>
 
@@ -61,6 +68,15 @@
 </template>
 
 <script setup>
+import { onMounted, ref } from 'vue'
 import lunaMark from '/src/assets/brand/luna-mark.png'
 import lunaLogo from '/src/assets/brand/luna-logo-full.png'
+import { getCurrentUser } from '../services/api'
+
+const isAdmin = ref(false)
+
+onMounted(async () => {
+  const user = await getCurrentUser()
+  isAdmin.value = user?.role === 'admin'
+})
 </script>

@@ -242,3 +242,70 @@ export async function logout() {
   if (!res.ok) throw new Error("Logout failed");
   return res.json();
 }
+
+export async function adminListUsers(status = "all") {
+  const params = new URLSearchParams();
+  if (status) params.append("status", status);
+
+  const res = await fetch(`${API_BASE}/api/admin/users?${params.toString()}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminCreateUser(username, password, role = "user") {
+  const res = await fetch(`${API_BASE}/api/admin/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password, role }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminSetUserRole(username, role) {
+  const res = await fetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(username)}/role`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminDeactivateUser(username) {
+  const res = await fetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(username)}/deactivate`,
+    {
+      method: "POST",
+    },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminActivateUser(username) {
+  const res = await fetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(username)}/activate`,
+    {
+      method: "POST",
+    },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminSetUserPassword(username, password) {
+  const res = await fetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(username)}/password`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

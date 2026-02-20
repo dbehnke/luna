@@ -44,6 +44,12 @@ const router = createRouter({
       name: "profile",
       component: () => import("../views/ProfileView.vue"),
     },
+    {
+      path: "/admin/users",
+      name: "admin-users",
+      component: () => import("../views/AdminUsersView.vue"),
+      meta: { requiresAdmin: true },
+    },
   ],
 });
 
@@ -57,6 +63,12 @@ router.beforeEach(async (to) => {
 
   if (user && isLoginRoute) {
     return { name: "home" };
+  }
+
+  if (to.matched.some((record) => record.meta?.requiresAdmin)) {
+    if (!user || user.role !== "admin") {
+      return { name: "home" };
+    }
   }
 
   return true;
