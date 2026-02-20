@@ -28,14 +28,14 @@
       <div class="w-full flex items-center" :class="sidebarPinned ? 'justify-between gap-2 px-1 mb-3' : 'justify-center mb-4'">
         <router-link
           to="/"
-          class="h-12 rounded-xl bg-[#0a2540] text-white flex items-center"
-          :class="sidebarPinned ? 'px-3 flex-1 justify-center' : 'w-12 justify-center'"
+          class="text-white flex items-center"
+          :class="sidebarPinned ? 'px-1 flex-1 justify-start h-14' : 'h-12 w-12 rounded-xl bg-[#0a2540] justify-center'"
           title="Home"
         >
           <img
             :src="sidebarPinned ? lunaLogoFull : lunaMark"
             alt="Luna"
-            :class="sidebarPinned ? 'h-8 w-full object-contain' : 'w-7 h-7 shrink-0'"
+            :class="sidebarPinned ? 'h-12 w-auto object-contain' : 'w-7 h-7 shrink-0'"
           />
         </router-link>
         <button
