@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -485,11 +486,176 @@ func workerCommand(cfg *config.Config) *cli.Command {
 }
 
 func importCommand(cfg *config.Config) *cli.Command {
+	var srcDir string
+	var username string
+
 	return &cli.Command{
 		Name:  "import",
 		Usage: "Import media from MediaCMS",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:        "src",
+				Usage:       "Source directory to import files from",
+				Required:    true,
+				Destination: &srcDir,
+			},
+			&cli.StringFlag{
+				Name:        "user",
+				Usage:       "Owner username for imported files",
+				Value:       "devuser",
+				Destination: &username,
+			},
+		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			logging.Info.Println("Import functionality not implemented yet")
+			if err := storage.EnsureRootLayout(cfg.MediaRoot); err != nil {
+				return fmt.Errorf("ensure media root layout: %w", err)
+			}
+
+			database, err := db.New(cfg)
+			if err != nil {
+				return fmt.Errorf("connect to database: %w", err)
+			}
+			defer database.Close()
+
+			if err := database.AutoMigrate(); err != nil {
+				return fmt.Errorf("run migrations: %w", err)
+			}
+
+			var user models.User
+			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+				passwordHash, hashErr := auth.HashPassword("changeme")
+				if hashErr != nil {
+					return fmt.Errorf("hash imported user password: %w", hashErr)
+				}
+				user = models.User{
+					Username:     username,
+					PasswordHash: passwordHash,
+					Role:         models.RoleUser,
+				}
+				if createErr := database.Create(&user).Error; createErr != nil {
+					return fmt.Errorf("create import user: %w", createErr)
+				}
+				logging.Info.Printf("Created import user %q with default password %q", username, "changeme")
+			}
+
+			jobQueue := jobs.New(database.DB)
+			imported := 0
+			skipped := 0
+
+			err = filepath.WalkDir(srcDir, func(path string, d os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if d.IsDir() {
+					return nil
+				}
+
+				ext := strings.ToLower(filepath.Ext(d.Name()))
+				mediaType := inferMediaTypeByExt(ext)
+				if mediaType == "" {
+					skipped++
+					return nil
+				}
+
+				itemID := id.NewULID()
+				if err := storage.EnsureItemDirs(cfg.MediaRoot, itemID); err != nil {
+					return fmt.Errorf("ensure item dirs for %s: %w", itemID, err)
+				}
+
+				srcFile, err := os.Open(path)
+				if err != nil {
+					return fmt.Errorf("open source file %s: %w", path, err)
+				}
+
+				destPath := filepath.Join(cfg.MediaRoot, "items", itemID, "original", "upload"+ext)
+				destFile, err := os.Create(destPath)
+				if err != nil {
+					srcFile.Close()
+					return fmt.Errorf("create dest file %s: %w", destPath, err)
+				}
+
+				if _, err := io.Copy(destFile, srcFile); err != nil {
+					srcFile.Close()
+					destFile.Close()
+					return fmt.Errorf("copy %s to %s: %w", path, destPath, err)
+				}
+				if err := srcFile.Close(); err != nil {
+					destFile.Close()
+					return fmt.Errorf("close source file %s: %w", path, err)
+				}
+				if err := destFile.Close(); err != nil {
+					return fmt.Errorf("close dest file %s: %w", destPath, err)
+				}
+
+				title := strings.TrimSuffix(d.Name(), ext)
+				now := time.Now().UTC()
+				item := models.MediaItem{
+					ID:          itemID,
+					UserID:      user.ID,
+					Type:        mediaType,
+					Title:       title,
+					Description: "",
+					CreatedAt:   now,
+					UpdatedAt:   now,
+				}
+
+				if err := database.Create(&item).Error; err != nil {
+					return fmt.Errorf("create media item for %s: %w", path, err)
+				}
+
+				itemMeta := &meta.ItemMeta{
+					Schema:        meta.SchemaVersion,
+					ItemID:        itemID,
+					Type:          mediaType,
+					OwnerUsername: user.Username,
+					Title:         title,
+					Description:   "",
+					CreatedAt:     now.Format(time.RFC3339),
+					State: meta.ItemState{
+						Highlighted: false,
+					},
+					Original: meta.OriginalFile{
+						Filename: d.Name(),
+						Path:     "original/upload" + ext,
+					},
+				}
+				if err := meta.WriteItemMetaAtomic(cfg.MediaRoot, itemID, itemMeta); err != nil {
+					return fmt.Errorf("write item meta for %s: %w", itemID, err)
+				}
+
+				assetsMeta := &meta.AssetsMeta{
+					Schema:     meta.SchemaVersion,
+					Assets:     []meta.Asset{},
+					Thumbnails: []meta.Thumbnail{},
+					Photos:     []meta.Photo{},
+				}
+				if err := meta.WriteAssetsMetaAtomic(cfg.MediaRoot, itemID, assetsMeta); err != nil {
+					return fmt.Errorf("write assets meta for %s: %w", itemID, err)
+				}
+
+				switch mediaType {
+				case models.MediaTypeVideo:
+					if err := jobQueue.EnqueueVideoProcessing(itemID); err != nil {
+						return fmt.Errorf("enqueue video processing for %s: %w", itemID, err)
+					}
+				case models.MediaTypeAudio:
+					if err := jobQueue.EnqueueAudioProcessing(itemID); err != nil {
+						return fmt.Errorf("enqueue audio processing for %s: %w", itemID, err)
+					}
+				case models.MediaTypePhoto:
+					if err := jobQueue.EnqueuePhotoProcessing(itemID); err != nil {
+						return fmt.Errorf("enqueue photo processing for %s: %w", itemID, err)
+					}
+				}
+
+				imported++
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("walk source directory: %w", err)
+			}
+
+			logging.Info.Printf("Import complete. Imported=%d Skipped=%d", imported, skipped)
 			return nil
 		},
 	}
@@ -547,26 +713,31 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 				&models.MediaItem{},
 				&models.Persona{},
 				&models.User{},
+				&models.Session{},
 				&models.Job{},
 				&models.ClipAsset{},
 				&models.Reaction{},
+				&models.Favorite{},
 			); err != nil {
 				return fmt.Errorf("drop tables: %w", err)
 			}
 
 			if err := database.AutoMigrateModels(
 				&models.User{},
+				&models.Session{},
 				&models.Persona{},
 				&models.MediaItem{},
 				&models.Job{},
 				&models.ClipAsset{},
 				&models.Reaction{},
+				&models.Favorite{},
 			); err != nil {
 				return fmt.Errorf("run migrations: %w", err)
 			}
 			logging.Info.Println("Database tables recreated")
 
-			var userCount, personaCount, itemCount, errorCount int
+			jobQueue := jobs.New(database.DB)
+			var userCount, personaCount, itemCount, errorCount, jobsEnqueued int
 
 			for _, entry := range entries {
 				if !entry.IsDir() {
@@ -586,9 +757,16 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 				var user models.User
 				result := database.Where("username = ?", itemMeta.OwnerUsername).First(&user)
 				if result.Error != nil {
+					passwordHash, hashErr := auth.HashPassword("changeme")
+					if hashErr != nil {
+						logging.Error.Printf("Failed to hash password for user %s: %v", itemMeta.OwnerUsername, hashErr)
+						errorCount++
+						continue
+					}
 					user = models.User{
-						Username: itemMeta.OwnerUsername,
-						Role:     models.RoleUser,
+						Username:     itemMeta.OwnerUsername,
+						PasswordHash: passwordHash,
+						Role:         models.RoleUser,
 					}
 					if err := database.Create(&user).Error; err != nil {
 						logging.Error.Printf("Failed to create user %s: %v", itemMeta.OwnerUsername, err)
@@ -638,6 +816,106 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 					errorCount++
 					continue
 				}
+				if itemMeta.State.DeletedAt != nil {
+					if deletedAt, err := time.Parse(time.RFC3339, *itemMeta.State.DeletedAt); err == nil {
+						database.Model(&mediaItem).Update("deleted_at", deletedAt)
+					}
+				}
+
+				assetsMeta, _ := meta.ReadAssetsMetaByID(mediaRoot, itemID)
+				if assetsMeta != nil {
+					for _, asset := range assetsMeta.Assets {
+						if asset.Kind != "short_clip" || asset.ClipID == "" {
+							continue
+						}
+
+						clipPath := filepath.Join(mediaRoot, "items", itemID, asset.StoragePath)
+						clipStatus := models.ClipStatusPending
+						if _, err := os.Stat(clipPath); err == nil {
+							clipStatus = models.ClipStatusReady
+						}
+
+						clip := models.ClipAsset{
+							ID:          asset.ClipID,
+							ItemID:      itemID,
+							StoragePath: asset.StoragePath,
+							Status:      clipStatus,
+							StartMs:     asset.StartMs,
+							EndMs:       asset.EndMs,
+							DurationMs:  asset.EndMs - asset.StartMs,
+							Width:       asset.Width,
+							Height:      asset.Height,
+							CropMode:    asset.CropMode,
+							CreatedAt:   time.Now(),
+							UpdatedAt:   time.Now(),
+						}
+						if clip.DurationMs < 0 {
+							clip.DurationMs = 0
+						}
+						database.Where("id = ?", clip.ID).FirstOrCreate(&clip)
+
+						if clipStatus != models.ClipStatusReady {
+							if _, err := jobQueue.Enqueue(models.JobTypeClip, models.JobStatusQueued, 75, jobs.ClipPayload{
+								ItemID:  itemID,
+								ClipID:  asset.ClipID,
+								StartMs: asset.StartMs,
+								EndMs:   asset.EndMs,
+							}); err == nil {
+								jobsEnqueued++
+							}
+						}
+					}
+				}
+
+				if itemMeta.Type == models.MediaTypeVideo {
+					if assetsMeta == nil || assetsMeta.SourceInfo == nil {
+						if _, err := jobQueue.Enqueue(models.JobTypeProbe, models.JobStatusQueued, 100, jobs.ProbePayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					}
+
+					masterPath := filepath.Join(mediaRoot, "items", itemID, "derived", "master.mp4")
+					if _, err := os.Stat(masterPath); os.IsNotExist(err) {
+						if _, err := jobQueue.Enqueue(models.JobTypeTranscode, models.JobStatusQueued, 50, jobs.TranscodePayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					}
+
+					if assetsMeta == nil || len(assetsMeta.Thumbnails) == 0 {
+						if _, err := jobQueue.Enqueue(models.JobTypeThumbs, models.JobStatusQueued, 50, jobs.ThumbsPayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					}
+				}
+
+				if itemMeta.Type == models.MediaTypeAudio {
+					if assetsMeta == nil || assetsMeta.SourceInfo == nil {
+						if _, err := jobQueue.Enqueue(models.JobTypeProbe, models.JobStatusQueued, 100, jobs.ProbePayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					}
+					audioPath := filepath.Join(mediaRoot, "items", itemID, "derived", "master.m4a")
+					if _, err := os.Stat(audioPath); os.IsNotExist(err) {
+						if _, err := jobQueue.Enqueue(models.JobTypeTranscode, models.JobStatusQueued, 50, jobs.TranscodePayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					}
+				}
+
+				if itemMeta.Type == models.MediaTypePhoto {
+					displayPath := filepath.Join(mediaRoot, "items", itemID, "photos", "display.webp")
+					thumbPath := filepath.Join(mediaRoot, "items", itemID, "photos", "thumb.webp")
+					if _, err := os.Stat(displayPath); os.IsNotExist(err) {
+						if _, err := jobQueue.Enqueue(models.JobTypePhotoThumb, models.JobStatusQueued, 60, jobs.PhotoThumbPayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					} else if _, err := os.Stat(thumbPath); os.IsNotExist(err) {
+						if _, err := jobQueue.Enqueue(models.JobTypePhotoThumb, models.JobStatusQueued, 60, jobs.PhotoThumbPayload{ItemID: itemID}); err == nil {
+							jobsEnqueued++
+						}
+					}
+				}
+
 				itemCount++
 			}
 
@@ -645,6 +923,7 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 			logging.Info.Printf("Users created: %d", userCount)
 			logging.Info.Printf("Personas created: %d", personaCount)
 			logging.Info.Printf("Media items restored: %d", itemCount)
+			logging.Info.Printf("Jobs enqueued: %d", jobsEnqueued)
 			logging.Info.Printf("Errors: %d", errorCount)
 
 			return nil
@@ -1269,6 +1548,19 @@ func waitForShutdown(server *http.Server) {
 		server.Shutdown(ctx)
 	}
 	logging.Info.Println("Shutdown complete")
+}
+
+func inferMediaTypeByExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi":
+		return models.MediaTypeVideo
+	case ".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg":
+		return models.MediaTypeAudio
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif":
+		return models.MediaTypePhoto
+	default:
+		return ""
+	}
 }
 
 func dirExists(path string) bool {
