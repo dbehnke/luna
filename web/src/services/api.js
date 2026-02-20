@@ -7,12 +7,28 @@ export function getPersonaDisplayName(item) {
   if (item.persona_display_name) {
     return item.persona_display_name
   }
+  if (item.persona_name) {
+    return item.persona_name
+  }
   return null
 }
 
 export function getPersonaAvatarUrl(item) {
   if (item.persona && typeof item.persona === 'object') {
     return item.persona.avatar_url || null
+  }
+  if (item.persona_avatar_url) {
+    return item.persona_avatar_url
+  }
+  return null
+}
+
+export function getPersonaSlug(item) {
+  if (item.persona && typeof item.persona === 'object') {
+    return item.persona.slug || null
+  }
+  if (item.persona_slug) {
+    return item.persona_slug
   }
   return null
 }
@@ -131,5 +147,32 @@ export async function uploadPersonaAvatar(personaId, file) {
     body: formData
   })
   if (!res.ok) throw new Error('Failed to upload avatar')
+  return res.json()
+}
+
+export async function getProfile(slug) {
+  const res = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(slug)}`)
+  if (!res.ok) throw new Error('Failed to get profile')
+  return res.json()
+}
+
+export async function getProfileItems(slug, options = {}) {
+  const params = new URLSearchParams()
+  if (options.type) params.append('type', options.type)
+  if (options.limit) params.append('limit', options.limit)
+  if (options.cursor) params.append('cursor', options.cursor)
+  
+  const res = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(slug)}/items?${params}`)
+  if (!res.ok) throw new Error('Failed to get profile items')
+  return res.json()
+}
+
+export async function getProfileShorts(slug, options = {}) {
+  const params = new URLSearchParams()
+  if (options.limit) params.append('limit', options.limit)
+  if (options.cursor) params.append('cursor', options.cursor)
+  
+  const res = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(slug)}/shorts?${params}`)
+  if (!res.ok) throw new Error('Failed to get profile shorts')
   return res.json()
 }

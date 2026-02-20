@@ -57,7 +57,7 @@
           <div class="mb-2">
             <h3 class="text-white font-bold text-lg">{{ clip.title }}</h3>
             <div class="flex items-center gap-2 mt-1">
-              <PersonaBadge :display-name="getPersonaDisplayName(clip)" :avatar-url="getPersonaAvatarUrl(clip)" variant="overlay" />
+              <PersonaBadge :display-name="getPersonaDisplayName(clip)" :avatar-url="getPersonaAvatarUrl(clip)" :slug="getPersonaSlug(clip)" variant="overlay" />
             </div>
           </div>
           
@@ -105,8 +105,11 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { listShorts, setReaction, getPersonaDisplayName, getPersonaAvatarUrl } from '../services/api'
+import { useRoute } from 'vue-router'
+import { listShorts, setReaction, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
+
+const route = useRoute()
 
 const clips = ref([])
 const loading = ref(true)
@@ -117,10 +120,85 @@ const cursor = ref('')
 const isPaused = ref(false)
 const videoPlayer = ref(null)
 const touchStartY = ref(0)
+const targetClipId = ref(null)
+
+function findClipIndex(clips, clipId) {
+  return clips.findIndex(c => c.clip_id === clipId)
+}
+
+function jumpToClip(clipId) {
+  const idx = findClipIndex(clips.value, clipId)
+  if (idx >= 0) {
+    currentIndex.value = idx
+    nextTick(() => playCurrent())
+  } else if (hasMore.value) {
+    loadMoreWithTarget(clipId)
+  }
+}
+
+async function loadMoreWithTarget(targetClip) {
+  loading.value = true
+  try {
+    const result = await listShorts({ 
+      limit: 10, 
+      cursor: cursor.value 
+    })
+    clips.value = [...clips.value, ...result.clips]
+    hasMore.value = result.has_more
+    cursor.value = result.cursor || ''
+    
+    const newIdx = findClipIndex(clips.value, targetClip)
+    if (newIdx >= 0) {
+      currentIndex.value = newIdx
+      await nextTick()
+      playCurrent()
+    } else if (hasMore.value) {
+      await loadMoreWithTarget(targetClip)
+    }
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
 
 async function loadShorts(append = false) {
   if (append) {
     loading.value = true
+  }
+  error.value = ''
+  
+  try {
+    const result = await listShorts({ 
+      limit: 10, 
+      cursor: append ? cursor.value : undefined 
+    })
+    
+    if (append) {
+      clips.value = [...clips.value, ...result.clips]
+    } else {
+      clips.value = result.clips
+    }
+    
+    hasMore.value = result.has_more
+    cursor.value = result.cursor || ''
+    
+    if (targetClipId.value) {
+      const idx = findClipIndex(clips.value, targetClipId.value)
+      if (idx >= 0) {
+        currentIndex.value = idx
+        targetClipId.value = null
+      } else if (hasMore.value && !append) {
+        await loadMoreWithTarget(targetClipId.value)
+        return
+      }
+    } else if (clips.value.length > 0 && !append) {
+      currentIndex.value = 0
+    }
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
   }
   error.value = ''
   
@@ -231,5 +309,11 @@ function onVideoLoaded() {
   }
 }
 
-onMounted(() => loadShorts)
+onMounted(() => {
+  const clipParam = route.query.clip
+  if (clipParam) {
+    targetClipId.value = clipParam
+  }
+  loadShorts()
+})
 </script>

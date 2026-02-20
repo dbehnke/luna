@@ -1,7 +1,10 @@
 <template>
-  <span
+  <component
+    :is="slug ? 'router-link' : 'span'"
     v-if="displayName"
+    :to="slug ? `/@${slug}` : undefined"
     :class="[
+      slug ? 'hover:text-purple-400 transition-colors cursor-pointer' : '',
       'inline-flex items-center gap-1.5',
       variant === 'compact' ? 'text-xs' : 'text-sm'
     ]"
@@ -28,7 +31,7 @@
     <span :class="variant === 'compact' ? 'text-gray-300' : 'text-gray-300'">
       {{ displayName }}
     </span>
-  </span>
+  </component>
   <span
     v-else
     :class="[
@@ -60,6 +63,10 @@ const props = defineProps({
     default: null
   },
   avatarUrl: {
+    type: String,
+    default: null
+  },
+  slug: {
     type: String,
     default: null
   },

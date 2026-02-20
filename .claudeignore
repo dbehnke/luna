@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+web/node_modules/
+
+# Build artifacts
+web/dist/
+web/.vite/
+
+# Media storage (critical)
+.luna/
+data/

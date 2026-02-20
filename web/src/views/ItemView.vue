@@ -73,7 +73,7 @@
             </span>
           </div>
           <div class="flex items-center gap-4 mb-4">
-            <PersonaBadge :display-name="getPersonaDisplayName(item)" :avatar-url="getPersonaAvatarUrl(item)" />
+            <PersonaBadge :display-name="getPersonaDisplayName(item)" :avatar-url="getPersonaAvatarUrl(item)" :slug="getPersonaSlug(item)" />
             <p class="text-gray-400">
               {{ formatDate(item.created_at) }}
             </p>
@@ -189,7 +189,7 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()

@@ -5,6 +5,7 @@ import LibraryView from '../views/LibraryView.vue'
 import ItemView from '../views/ItemView.vue'
 import ShortsView from '../views/ShortsView.vue'
 import PersonasView from '../views/PersonasView.vue'
+import ProfileView from '../views/ProfileView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -38,6 +39,11 @@ const router = createRouter({
       path: '/personas',
       name: 'personas',
       component: PersonasView
+    },
+    {
+      path: '/@:slug',
+      name: 'profile',
+      component: ProfileView
     }
   ]
 })
