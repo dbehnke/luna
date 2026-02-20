@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -795,8 +796,10 @@ func (h *Handler) ReprocessItem(w http.ResponseWriter, r *http.Request, itemID s
 }
 
 type CreateClipRequest struct {
-	StartMs int64 `json:"start_ms"`
-	EndMs   int64 `json:"end_ms"`
+	StartMs     int64   `json:"start_ms"`
+	EndMs       int64   `json:"end_ms"`
+	PersonaID   *string `json:"persona_id,omitempty"`
+	Description string  `json:"description"`
 }
 
 type CreateClipResponse struct {
@@ -867,12 +870,20 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 		return
 	}
 
+	personaID, err := h.resolveClipPersonaID(user, &item, req.PersonaID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	clipID := id.NewULID()
 
 	clipAsset := models.ClipAsset{
 		ID:          clipID,
 		ItemID:      itemID,
+		PersonaID:   personaID,
 		StoragePath: fmt.Sprintf("derived/short_%s.mp4", clipID),
+		Description: strings.TrimSpace(req.Description),
 		Status:      models.ClipStatusPending,
 		StartMs:     req.StartMs,
 		EndMs:       req.EndMs,
@@ -925,6 +936,84 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 		Status: "queued",
 	}); err != nil {
 		logging.Error.Printf("Failed to encode create clip response for %s: %v", itemID, err)
+	}
+}
+
+type UpdateClipRequest struct {
+	PersonaID   *string `json:"persona_id,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (h *Handler) UpdateClip(w http.ResponseWriter, r *http.Request, itemID string, clipID string) {
+	user := auth.GetUser(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if itemID == "" || clipID == "" {
+		http.Error(w, "Item ID and clip ID are required", http.StatusBadRequest)
+		return
+	}
+
+	var item models.MediaItem
+	if err := h.db.First(&item, "id = ?", itemID).Error; err != nil {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageItem(user, &item) {
+		http.Error(w, "Forbidden - only owner or admin can update clips", http.StatusForbidden)
+		return
+	}
+
+	var clip models.ClipAsset
+	if err := h.db.Where("id = ? AND item_id = ?", clipID, itemID).First(&clip).Error; err != nil {
+		http.Error(w, "Clip not found", http.StatusNotFound)
+		return
+	}
+
+	var req UpdateClipRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Description == nil && req.PersonaID == nil {
+		http.Error(w, "No changes provided", http.StatusBadRequest)
+		return
+	}
+
+	if req.PersonaID != nil {
+		personaID, err := h.resolveClipPersonaID(user, &item, req.PersonaID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		clip.PersonaID = personaID
+	}
+	if req.Description != nil {
+		clip.Description = strings.TrimSpace(*req.Description)
+	}
+	clip.UpdatedAt = time.Now()
+
+	if err := h.db.Save(&clip).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update clip: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	personaSlug, personaDisplayName, personaAvatarURL := h.getClipPersonaFields(clip.PersonaID)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"clip_id":              clip.ID,
+		"item_id":              clip.ItemID,
+		"status":               clip.Status,
+		"description":          clip.Description,
+		"persona_id":           clip.PersonaID,
+		"persona_slug":         personaSlug,
+		"persona_display_name": personaDisplayName,
+		"persona_avatar_url":   personaAvatarURL,
+		"updated_at":           clip.UpdatedAt.Format(time.RFC3339),
+	}); err != nil {
+		logging.Error.Printf("Failed to encode update clip response for %s/%s: %v", itemID, clipID, err)
 	}
 }
 
@@ -1069,18 +1158,22 @@ func (h *Handler) DeleteClip(w http.ResponseWriter, r *http.Request, itemID stri
 }
 
 type ShortsClipResponse struct {
-	ClipID       string  `json:"clip_id"`
-	ItemID       string  `json:"item_id"`
-	VideoURL     string  `json:"video_url,omitempty"`
-	ThumbURL     string  `json:"thumb_url,omitempty"`
-	Title        string  `json:"title"`
-	OwnerName    string  `json:"owner_name"`
-	PersonaSlug  *string `json:"persona_slug,omitempty"`
-	UpCount      int     `json:"up_count"`
-	DownCount    int     `json:"down_count"`
-	UserReaction *int    `json:"user_reaction,omitempty"`
-	CreatedAt    string  `json:"created_at"`
-	Status       string  `json:"status"`
+	ClipID             string  `json:"clip_id"`
+	ItemID             string  `json:"item_id"`
+	VideoURL           string  `json:"video_url,omitempty"`
+	ThumbURL           string  `json:"thumb_url,omitempty"`
+	Title              string  `json:"title"`
+	Description        string  `json:"description"`
+	OwnerName          string  `json:"owner_name"`
+	PersonaID          *string `json:"persona_id,omitempty"`
+	PersonaSlug        *string `json:"persona_slug,omitempty"`
+	PersonaDisplayName *string `json:"persona_display_name,omitempty"`
+	PersonaAvatarURL   *string `json:"persona_avatar_url,omitempty"`
+	UpCount            int     `json:"up_count"`
+	DownCount          int     `json:"down_count"`
+	UserReaction       *int    `json:"user_reaction,omitempty"`
+	CreatedAt          string  `json:"created_at"`
+	Status             string  `json:"status"`
 }
 
 type ListShortsResponse struct {
@@ -1098,10 +1191,14 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := h.db.Model(&models.ClipAsset{}).
-		Select("clip_assets.*, media_items.title, users.username as owner_name, personas.slug as persona_slug").
+		Select(`clip_assets.*, media_items.title, users.username as owner_name,
+COALESCE(clip_personas.slug, item_personas.slug) as persona_slug,
+COALESCE(clip_personas.display_name, item_personas.display_name) as persona_display_name,
+COALESCE(NULLIF(clip_personas.avatar_path, ''), NULLIF(item_personas.avatar_path, '')) as persona_avatar_path`).
 		Joins("JOIN media_items ON media_items.id = clip_assets.item_id").
 		Joins("JOIN users ON users.id = media_items.user_id").
-		Joins("LEFT JOIN personas ON personas.id = media_items.persona_id").
+		Joins("LEFT JOIN personas AS clip_personas ON clip_personas.id = clip_assets.persona_id").
+		Joins("LEFT JOIN personas AS item_personas ON item_personas.id = media_items.persona_id").
 		Where("media_items.deleted_at IS NULL").
 		Order("clip_assets.created_at DESC, clip_assets.id DESC")
 
@@ -1122,9 +1219,11 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 
 	var clips []struct {
 		models.ClipAsset
-		Title       string
-		OwnerName   string
-		PersonaSlug *string
+		Title              string
+		OwnerName          string
+		PersonaSlug        *string
+		PersonaDisplayName *string
+		PersonaAvatarPath  *string
 	}
 
 	query = query.Limit(limit + 1)
@@ -1166,19 +1265,29 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 			videoURL = "/media/" + clip.ItemID + "/derived/short_" + clip.ID + ".mp4"
 		}
 
+		var personaAvatarURL *string
+		if clip.PersonaAvatarPath != nil && *clip.PersonaAvatarPath != "" {
+			avatar := "/media/avatars/" + *clip.PersonaAvatarPath
+			personaAvatarURL = &avatar
+		}
+
 		responses = append(responses, ShortsClipResponse{
-			ClipID:       clip.ID,
-			ItemID:       clip.ItemID,
-			VideoURL:     videoURL,
-			ThumbURL:     thumbURL,
-			Title:        clip.Title,
-			OwnerName:    clip.OwnerName,
-			PersonaSlug:  clip.PersonaSlug,
-			UpCount:      int(upCount),
-			DownCount:    int(downCount),
-			UserReaction: userReaction,
-			CreatedAt:    clip.CreatedAt.Format(time.RFC3339),
-			Status:       status,
+			ClipID:             clip.ID,
+			ItemID:             clip.ItemID,
+			VideoURL:           videoURL,
+			ThumbURL:           thumbURL,
+			Title:              clip.Title,
+			Description:        clip.Description,
+			OwnerName:          clip.OwnerName,
+			PersonaID:          clip.PersonaID,
+			PersonaSlug:        clip.PersonaSlug,
+			PersonaDisplayName: clip.PersonaDisplayName,
+			PersonaAvatarURL:   personaAvatarURL,
+			UpCount:            int(upCount),
+			DownCount:          int(downCount),
+			UserReaction:       userReaction,
+			CreatedAt:          clip.CreatedAt.Format(time.RFC3339),
+			Status:             status,
 		})
 	}
 
@@ -1396,26 +1505,96 @@ func (h *Handler) canManageItem(user *models.User, item *models.MediaItem) bool 
 	return persona.UserID == user.ID
 }
 
+func (h *Handler) resolveClipPersonaID(user *models.User, item *models.MediaItem, reqPersonaID *string) (*string, error) {
+	personaID := item.PersonaID
+	if reqPersonaID != nil {
+		trimmed := strings.TrimSpace(*reqPersonaID)
+		if trimmed == "" {
+			personaID = nil
+		} else {
+			personaIDCopy := trimmed
+			personaID = &personaIDCopy
+		}
+	}
+
+	if personaID == nil || *personaID == "" {
+		return nil, nil
+	}
+
+	var persona models.Persona
+	if err := h.db.First(&persona, "id = ?", *personaID).Error; err != nil {
+		return nil, errors.New("invalid persona_id")
+	}
+
+	if user.Role != models.RoleAdmin && persona.UserID != user.ID {
+		return nil, errors.New("forbidden - persona is not owned by current user")
+	}
+
+	personaIDCopy := persona.ID
+	return &personaIDCopy, nil
+}
+
+func (h *Handler) getClipPersonaFields(personaID *string) (*string, *string, *string) {
+	if personaID == nil || *personaID == "" {
+		return nil, nil, nil
+	}
+
+	var persona models.Persona
+	if err := h.db.Select("id", "slug", "display_name", "avatar_path").First(&persona, "id = ?", *personaID).Error; err != nil {
+		return nil, nil, nil
+	}
+
+	slug := persona.Slug
+	displayName := persona.DisplayName
+	var avatarURL *string
+	if persona.AvatarPath != "" {
+		avatar := "/media/avatars/" + persona.AvatarPath
+		avatarURL = &avatar
+	}
+
+	return &slug, &displayName, avatarURL
+}
+
 func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID string) {
 	if itemID == "" {
 		http.Error(w, "Item ID required", http.StatusBadRequest)
 		return
 	}
 
-	var clips []models.ClipAsset
-	if err := h.db.Where("item_id = ?", itemID).Order("created_at DESC").Find(&clips).Error; err != nil {
+	var clips []struct {
+		models.ClipAsset
+		PersonaSlug        *string
+		PersonaDisplayName *string
+		PersonaAvatarPath  *string
+	}
+	if err := h.db.Model(&models.ClipAsset{}).
+		Select(`clip_assets.*,
+COALESCE(clip_personas.slug, item_personas.slug) as persona_slug,
+COALESCE(clip_personas.display_name, item_personas.display_name) as persona_display_name,
+COALESCE(NULLIF(clip_personas.avatar_path, ''), NULLIF(item_personas.avatar_path, '')) as persona_avatar_path`).
+		Joins("LEFT JOIN media_items ON media_items.id = clip_assets.item_id").
+		Joins("LEFT JOIN personas AS clip_personas ON clip_personas.id = clip_assets.persona_id").
+		Joins("LEFT JOIN personas AS item_personas ON item_personas.id = media_items.persona_id").
+		Where("clip_assets.item_id = ?", itemID).
+		Order("clip_assets.created_at DESC").
+		Find(&clips).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get clips: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	type ClipInfo struct {
-		ClipID     string `json:"clip_id"`
-		Status     string `json:"status"`
-		StartMs    int64  `json:"start_ms"`
-		EndMs      int64  `json:"end_ms"`
-		DurationMs int64  `json:"duration_ms"`
-		VideoURL   string `json:"video_url,omitempty"`
-		CreatedAt  string `json:"created_at"`
+		ClipID             string  `json:"clip_id"`
+		Status             string  `json:"status"`
+		StartMs            int64   `json:"start_ms"`
+		EndMs              int64   `json:"end_ms"`
+		DurationMs         int64   `json:"duration_ms"`
+		Description        string  `json:"description"`
+		PersonaID          *string `json:"persona_id,omitempty"`
+		PersonaSlug        *string `json:"persona_slug,omitempty"`
+		PersonaDisplayName *string `json:"persona_display_name,omitempty"`
+		PersonaAvatarURL   *string `json:"persona_avatar_url,omitempty"`
+		VideoURL           string  `json:"video_url,omitempty"`
+		CreatedAt          string  `json:"created_at"`
 	}
 
 	responses := make([]ClipInfo, len(clips))
@@ -1424,14 +1603,25 @@ func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID st
 		if clip.Status == models.ClipStatusReady {
 			videoURL = "/media/" + itemID + "/derived/short_" + clip.ID + ".mp4"
 		}
+
+		var personaAvatarURL *string
+		if clip.PersonaAvatarPath != nil && *clip.PersonaAvatarPath != "" {
+			avatar := "/media/avatars/" + *clip.PersonaAvatarPath
+			personaAvatarURL = &avatar
+		}
 		responses[i] = ClipInfo{
-			ClipID:     clip.ID,
-			Status:     clip.Status,
-			StartMs:    clip.StartMs,
-			EndMs:      clip.EndMs,
-			DurationMs: clip.DurationMs,
-			VideoURL:   videoURL,
-			CreatedAt:  clip.CreatedAt.Format(time.RFC3339),
+			ClipID:             clip.ID,
+			Status:             clip.Status,
+			StartMs:            clip.StartMs,
+			EndMs:              clip.EndMs,
+			DurationMs:         clip.DurationMs,
+			Description:        clip.Description,
+			PersonaID:          clip.PersonaID,
+			PersonaSlug:        clip.PersonaSlug,
+			PersonaDisplayName: clip.PersonaDisplayName,
+			PersonaAvatarURL:   personaAvatarURL,
+			VideoURL:           videoURL,
+			CreatedAt:          clip.CreatedAt.Format(time.RFC3339),
 		}
 	}
 
@@ -1969,8 +2159,22 @@ func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetUserID := user.ID
+	if userIDParam := strings.TrimSpace(r.URL.Query().Get("user_id")); userIDParam != "" {
+		if user.Role != models.RoleAdmin {
+			http.Error(w, "Forbidden - only admin can query another user's personas", http.StatusForbidden)
+			return
+		}
+		parsed, err := strconv.ParseUint(userIDParam, 10, 64)
+		if err != nil || parsed == 0 {
+			http.Error(w, "Invalid user_id", http.StatusBadRequest)
+			return
+		}
+		targetUserID = uint(parsed)
+	}
+
 	var personas []models.Persona
-	if err := h.db.Where("user_id = ?", user.ID).Order("created_at DESC").Find(&personas).Error; err != nil {
+	if err := h.db.Where("user_id = ?", targetUserID).Order("created_at DESC").Find(&personas).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list personas: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -2341,7 +2545,9 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 	var videoCount, shortCount int64
 
 	h.db.Model(&models.MediaItem{}).Where("persona_id = ? AND deleted_at IS NULL AND type = ?", persona.ID, models.MediaTypeVideo).Count(&videoCount)
-	h.db.Model(&models.ClipAsset{}).Joins("JOIN media_items ON media_items.id = clip_assets.item_id").Where("media_items.persona_id = ? AND media_items.deleted_at IS NULL AND clip_assets.status = ?", persona.ID, models.ClipStatusReady).Count(&shortCount)
+	h.db.Model(&models.ClipAsset{}).Joins("JOIN media_items ON media_items.id = clip_assets.item_id").
+		Where("COALESCE(clip_assets.persona_id, media_items.persona_id) = ? AND media_items.deleted_at IS NULL AND clip_assets.status = ?", persona.ID, models.ClipStatusReady).
+		Count(&shortCount)
 
 	resp := ProfileResponse{
 		PersonaID:   persona.ID,
@@ -2539,7 +2745,7 @@ func (h *Handler) GetProfileShorts(w http.ResponseWriter, r *http.Request, slug 
 	query := h.db.Model(&models.ClipAsset{}).
 		Select("clip_assets.*, media_items.title").
 		Joins("JOIN media_items ON media_items.id = clip_assets.item_id").
-		Where("media_items.persona_id = ? AND media_items.deleted_at IS NULL AND clip_assets.status = ?", persona.ID, models.ClipStatusReady).
+		Where("COALESCE(clip_assets.persona_id, media_items.persona_id) = ? AND media_items.deleted_at IS NULL AND clip_assets.status = ?", persona.ID, models.ClipStatusReady).
 		Order("clip_assets.created_at DESC, clip_assets.id DESC")
 
 	cursor := r.URL.Query().Get("cursor")

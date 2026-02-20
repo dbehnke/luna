@@ -312,6 +312,10 @@ func serveCommand(cfg *config.Config) *cli.Command {
 							h.DeleteClip(w, r, parts[0], parts[1])
 							return
 						}
+						if len(parts) == 2 && parts[0] != "" && parts[1] != "" && (r.Method == "PATCH" || r.Method == "PUT") {
+							h.UpdateClip(w, r, parts[0], parts[1])
+							return
+						}
 					}
 
 					if r.Method == "GET" && strings.HasSuffix(id, "/clips") {

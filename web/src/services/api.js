@@ -139,13 +139,36 @@ export async function setItemThumbnail(itemId, timestampMs) {
   return res.json();
 }
 
-export async function createClip(itemId, startMs, endMs) {
+export async function createClip(
+  itemId,
+  startMs,
+  endMs,
+  { personaId = null, description = "" } = {},
+) {
   const res = await fetch(`${API_BASE}/api/items/${itemId}/clip`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ start_ms: startMs, end_ms: endMs }),
+    body: JSON.stringify({
+      start_ms: startMs,
+      end_ms: endMs,
+      persona_id: personaId,
+      description,
+    }),
   });
   if (!res.ok) throw new Error("Failed to create clip");
+  return res.json();
+}
+
+export async function updateClip(itemId, clipId, updates) {
+  const res = await fetch(`${API_BASE}/api/items/${itemId}/clips/${clipId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to update clip");
+  }
   return res.json();
 }
 
@@ -206,8 +229,11 @@ export async function setHighlight(itemId, enabled) {
   return res.json();
 }
 
-export async function getPersonas() {
-  const res = await fetch(`${API_BASE}/api/personas`);
+export async function getPersonas(options = {}) {
+  const params = new URLSearchParams();
+  if (options.userId) params.append("user_id", options.userId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const res = await fetch(`${API_BASE}/api/personas${suffix}`);
   if (!res.ok) throw new Error("Failed to get personas");
   return res.json();
 }
