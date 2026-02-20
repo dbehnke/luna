@@ -38,6 +38,7 @@
             </p>
             <div class="flex gap-4 mt-2 text-gray-400">
               <span>{{ profile.counts.videos }} videos</span>
+              <span>{{ profile.counts.audio }} audio</span>
               <span>{{ profile.counts.shorts }} shorts</span>
             </div>
           </div>
@@ -58,6 +59,17 @@
           <button
             :class="[
               'flex-1 py-3 text-center font-medium transition-colors',
+              activeTab === 'audio'
+                ? 'text-purple-400 border-b-2 border-purple-400'
+                : 'text-gray-400 hover:text-white'
+            ]"
+            @click="activeTab = 'audio'"
+          >
+            Audio
+          </button>
+          <button
+            :class="[
+              'flex-1 py-3 text-center font-medium transition-colors',
               activeTab === 'shorts'
                 ? 'text-purple-400 border-b-2 border-purple-400'
                 : 'text-gray-400 hover:text-white'
@@ -74,7 +86,7 @@
               <input
                 v-model="searchQuery"
                 type="text"
-                placeholder="Search videos..."
+                placeholder="Search media..."
                 class="w-full bg-[#162a4a] text-white px-3 py-2 rounded-lg pl-9 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
                 @input="onSearchInput"
               />
@@ -138,6 +150,54 @@
           </div>
         </div>
 
+        <div v-if="activeTab === 'audio'">
+          <div v-if="audioLoading" class="text-center text-gray-400 py-8">
+            Loading audio...
+          </div>
+
+          <div v-else-if="audioItems.length === 0" class="text-center text-gray-400 py-8">
+            No audio yet
+          </div>
+
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <router-link
+              v-for="audio in audioItems"
+              :key="audio.id"
+              :to="`/item/${audio.id}`"
+              class="block bg-[#162a4a] rounded-lg overflow-hidden hover:bg-[#1e3a5f] transition-colors"
+            >
+              <div class="aspect-video bg-black relative">
+                <img
+                  v-if="audio.thumb_url"
+                  :src="audio.thumb_url"
+                  :alt="audio.title"
+                  class="w-full h-full object-cover"
+                />
+                <div v-else class="w-full h-full flex items-center justify-center text-gray-500">
+                  <svg class="w-12 h-12" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M9 18V5l12-2v13"/>
+                    <circle cx="6" cy="18" r="3"/>
+                    <circle cx="18" cy="16" r="3"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="p-3">
+                <h3 class="font-medium text-sm truncate">{{ audio.title }}</h3>
+                <p class="text-xs text-gray-400 mt-1">{{ formatDate(audio.created_at) }}</p>
+              </div>
+            </router-link>
+          </div>
+
+          <div v-if="audioHasMore" class="text-center mt-6">
+            <button
+              class="bg-purple-600 hover:bg-purple-500 px-6 py-2 rounded-lg"
+              @click="loadMoreAudio"
+            >
+              Load More
+            </button>
+          </div>
+        </div>
+
         <div v-if="activeTab === 'shorts'">
           <div v-if="shortsLoading" class="text-center text-gray-400 py-8">
             Loading shorts...
@@ -194,7 +254,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { getProfile, getProfileItems, getProfileShorts } from '../services/api'
+import { getProfile, getProfileItems, getProfileShorts, getProfileAudio } from '../services/api'
 
 const route = useRoute()
 const slug = computed(() => route.params.slug)
@@ -218,6 +278,11 @@ const shorts = ref([])
 const shortsLoading = ref(false)
 const shortsHasMore = ref(false)
 const shortsCursor = ref('')
+
+const audioItems = ref([])
+const audioLoading = ref(false)
+const audioHasMore = ref(false)
+const audioCursor = ref('')
 
 const initials = computed(() => {
   if (!profile.value?.display_name) return '?'
@@ -276,8 +341,42 @@ function onSearchInput() {
   clearTimeout(searchDebounceTimer)
   searchDebounceTimer = setTimeout(() => {
     videosCursor.value = ''
-    loadVideos()
+    audioCursor.value = ''
+    if (activeTab.value === 'audio') {
+      loadAudio()
+    } else {
+      loadVideos()
+    }
   }, 300)
+}
+
+async function loadAudio(append = false) {
+  if (append) {
+    audioLoading.value = true
+  }
+
+  try {
+    const options = {
+      limit: 24,
+      sort: sortOrder.value
+    }
+    if (searchQuery.value) options.q = searchQuery.value
+    if (append && audioCursor.value) options.cursor = audioCursor.value
+
+    const result = await getProfileAudio(slug.value, options)
+    const rows = result.audio || []
+    if (append) {
+      audioItems.value = [...audioItems.value, ...rows]
+    } else {
+      audioItems.value = rows
+    }
+    audioHasMore.value = result.has_more
+    audioCursor.value = result.next_cursor || ''
+  } catch (e) {
+    console.error('Failed to load audio:', e)
+  } finally {
+    audioLoading.value = false
+  }
 }
 
 async function loadShorts(append = false) {
@@ -314,6 +413,10 @@ async function loadMoreShorts() {
   await loadShorts(true)
 }
 
+async function loadMoreAudio() {
+  await loadAudio(true)
+}
+
 function goToShorts(clipId) {
   window.location.href = `/shorts?clip=${clipId}`
 }
@@ -335,6 +438,8 @@ function formatDuration(short) {
 watch(activeTab, async (tab) => {
   if (tab === 'videos' && videos.value.length === 0) {
     await loadVideos()
+  } else if (tab === 'audio' && audioItems.value.length === 0) {
+    await loadAudio()
   } else if (tab === 'shorts' && shorts.value.length === 0) {
     await loadShorts()
   }
@@ -343,10 +448,18 @@ watch(activeTab, async (tab) => {
 watch(slug, async () => {
   await loadProfile()
   videos.value = []
+  audioItems.value = []
   shorts.value = []
   searchQuery.value = ''
   sortOrder.value = 'new'
   activeTab.value = 'videos'
+})
+
+watch(sortOrder, async () => {
+  if (activeTab.value === 'audio') {
+    audioCursor.value = ''
+    await loadAudio()
+  }
 })
 
 onMounted(async () => {

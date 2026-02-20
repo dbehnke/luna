@@ -400,6 +400,14 @@ func serveCommand(cfg *config.Config) *cli.Command {
 						}
 					}
 
+					if strings.HasSuffix(slug, "/audio") {
+						slug = strings.TrimSuffix(slug, "/audio")
+						if r.Method == "GET" {
+							h.GetProfileAudio(w, r, slug)
+							return
+						}
+					}
+
 					if r.Method == "GET" {
 						h.GetProfile(w, r, slug)
 						return

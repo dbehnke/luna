@@ -315,6 +315,20 @@ export async function getProfileShorts(slug, options = {}) {
   return res.json();
 }
 
+export async function getProfileAudio(slug, options = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.append("limit", options.limit);
+  if (options.cursor) params.append("cursor", options.cursor);
+  if (options.sort) params.append("sort", options.sort);
+  if (options.q) params.append("q", options.q);
+
+  const res = await fetch(
+    `${API_BASE}/api/profile/${encodeURIComponent(slug)}/audio?${params}`,
+  );
+  if (!res.ok) throw new Error("Failed to get profile audio");
+  return res.json();
+}
+
 export async function getCurrentUser() {
   const res = await fetch(`${API_BASE}/api/me`);
   if (!res.ok) return null;

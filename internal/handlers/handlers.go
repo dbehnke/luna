@@ -2526,6 +2526,7 @@ type ProfileResponse struct {
 	CreatedAt   string `json:"created_at"`
 	Counts      struct {
 		Videos int64 `json:"videos"`
+		Audio  int64 `json:"audio"`
 		Shorts int64 `json:"shorts"`
 	} `json:"counts"`
 }
@@ -2542,9 +2543,10 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 		return
 	}
 
-	var videoCount, shortCount int64
+	var videoCount, audioCount, shortCount int64
 
 	h.db.Model(&models.MediaItem{}).Where("persona_id = ? AND deleted_at IS NULL AND type = ?", persona.ID, models.MediaTypeVideo).Count(&videoCount)
+	h.db.Model(&models.MediaItem{}).Where("persona_id = ? AND deleted_at IS NULL AND type = ?", persona.ID, models.MediaTypeAudio).Count(&audioCount)
 	h.db.Model(&models.ClipAsset{}).Joins("JOIN media_items ON media_items.id = clip_assets.item_id").
 		Where("COALESCE(clip_assets.persona_id, media_items.persona_id) = ? AND media_items.deleted_at IS NULL AND clip_assets.status = ?", persona.ID, models.ClipStatusReady).
 		Count(&shortCount)
@@ -2558,6 +2560,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 		CreatedAt:   persona.CreatedAt.Format(time.RFC3339),
 	}
 	resp.Counts.Videos = videoCount
+	resp.Counts.Audio = audioCount
 	resp.Counts.Shorts = shortCount
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2815,5 +2818,112 @@ func (h *Handler) GetProfileShorts(w http.ResponseWriter, r *http.Request, slug 
 		HasMore:    hasMore,
 	}); err != nil {
 		logging.Error.Printf("Failed to encode profile shorts response for %s: %v", slug, err)
+	}
+}
+
+type ProfileAudioResponse struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt string `json:"created_at"`
+	MasterURL string `json:"master_url,omitempty"`
+	ThumbURL  string `json:"thumb_url,omitempty"`
+}
+
+type ProfileAudioListResponse struct {
+	Audio      []ProfileAudioResponse `json:"audio"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+	HasMore    bool                   `json:"has_more"`
+}
+
+func (h *Handler) GetProfileAudio(w http.ResponseWriter, r *http.Request, slug string) {
+	if slug == "" {
+		http.Error(w, "Slug required", http.StatusBadRequest)
+		return
+	}
+
+	var persona models.Persona
+	if err := h.db.First(&persona, "slug = ?", slug).Error; err != nil {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	limit := 24
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 50 {
+			limit = parsed
+		}
+	}
+
+	sortOrder := "created_at DESC"
+	if r.URL.Query().Get("sort") == "old" {
+		sortOrder = "created_at ASC"
+	}
+
+	query := h.db.Model(&models.MediaItem{}).
+		Where("persona_id = ? AND deleted_at IS NULL AND type = ?", persona.ID, models.MediaTypeAudio)
+
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	if searchQuery != "" {
+		query = query.Where("LOWER(title) LIKE LOWER(?)", "%"+searchQuery+"%")
+	}
+
+	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	if cursor != "" {
+		if decodedBytes, err := base64.StdEncoding.DecodeString(cursor); err == nil {
+			if cursorTime, parseErr := time.Parse(time.RFC3339, string(decodedBytes)); parseErr == nil {
+				query = query.Where("created_at < ?", cursorTime)
+			}
+		}
+	}
+
+	var items []models.MediaItem
+	query = query.Order(sortOrder).Limit(limit + 1)
+	if err := query.Find(&items).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list audio: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	responses := make([]ProfileAudioResponse, len(items))
+	for i, item := range items {
+		resp := ProfileAudioResponse{
+			ID:        item.ID,
+			Title:     item.Title,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		}
+
+		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, item.ID)
+		if assetsMeta != nil {
+			for _, asset := range assetsMeta.Assets {
+				if asset.Kind == "master_mp4" || asset.Kind == "master_m4a" {
+					resp.MasterURL = "/media/" + item.ID + "/" + asset.StoragePath
+					break
+				}
+			}
+			if len(assetsMeta.Thumbnails) > 0 {
+				resp.ThumbURL = thumbnailURL(item.ID, assetsMeta.Thumbnails[0])
+			}
+		}
+
+		responses[i] = resp
+	}
+
+	var nextCursor string
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = base64.StdEncoding.EncodeToString([]byte(last.CreatedAt.Format(time.RFC3339)))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(ProfileAudioListResponse{
+		Audio:      responses,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode profile audio response for %s: %v", slug, err)
 	}
 }
