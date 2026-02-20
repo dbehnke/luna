@@ -41,6 +41,7 @@ func (d *DB) AutoMigrate() error {
 		&models.Job{},
 		&models.ClipAsset{},
 		&models.Reaction{},
+		&models.Favorite{},
 		&models.SchemaVersion{},
 	)
 }

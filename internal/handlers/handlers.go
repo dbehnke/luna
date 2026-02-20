@@ -283,7 +283,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 
 	searchQuery := r.URL.Query().Get("q")
 	if searchQuery != "" {
-		query = query.Where("title ILIKE ?", "%"+searchQuery+"%")
+		query = query.Where("LOWER(title) LIKE LOWER(?)", "%"+searchQuery+"%")
 	}
 
 	itemType := r.URL.Query().Get("type")
@@ -329,10 +329,30 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sortOrder := "created_at DESC"
+	sortOrder := "created_at DESC, id DESC"
 	sortParam := r.URL.Query().Get("sort")
+	sortDescending := true
 	if sortParam == "old" {
-		sortOrder = "created_at ASC"
+		sortOrder = "created_at ASC, id ASC"
+		sortDescending = false
+	}
+
+	cursor := r.URL.Query().Get("cursor")
+	if cursor != "" {
+		if decodedBytes, err := base64.StdEncoding.DecodeString(cursor); err == nil {
+			parts := strings.Split(string(decodedBytes), "|")
+			if len(parts) == 2 {
+				if tsNanos, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+					cursorTime := time.Unix(0, tsNanos).UTC()
+					cursorID := parts[1]
+					if sortDescending {
+						query = query.Where("(created_at < ? OR (created_at = ? AND id < ?))", cursorTime, cursorTime, cursorID)
+					} else {
+						query = query.Where("(created_at > ? OR (created_at = ? AND id > ?))", cursorTime, cursorTime, cursorID)
+					}
+				}
+			}
+		}
 	}
 
 	var items []models.MediaItem
@@ -345,6 +365,12 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	hasMore := len(items) > limit
 	if hasMore {
 		items = items[:limit]
+	}
+
+	var nextCursor string
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d|%s", last.CreatedAt.UnixNano(), last.ID)))
 	}
 
 	userFavoritedIDs := map[string]bool{}
@@ -432,6 +458,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ListItemsResponse{
 		Items:   responses,
+		Cursor:  nextCursor,
 		HasMore: hasMore,
 	})
 }
@@ -1517,7 +1544,7 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 
 	searchQuery := r.URL.Query().Get("q")
 	if searchQuery != "" {
-		query = query.Where("title ILIKE ?", "%"+searchQuery+"%")
+		query = query.Where("LOWER(title) LIKE LOWER(?)", "%"+searchQuery+"%")
 	}
 
 	highlighted := r.URL.Query().Get("highlighted")
