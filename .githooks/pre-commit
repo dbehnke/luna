@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+
+set -eu
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-commit: golangci-lint not found in PATH"
+  echo "install: https://golangci-lint.run/welcome/install/"
+  exit 1
+fi
+
+echo "pre-commit: running golangci-lint..."
+
+staged_go_files="$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')"
+
+if [ -z "${staged_go_files}" ]; then
+  echo "pre-commit: no staged Go files, skipping golangci-lint"
+  exit 0
+fi
+
+echo "pre-commit: linting staged files"
+# shellcheck disable=SC2086
+golangci-lint run ${staged_go_files}

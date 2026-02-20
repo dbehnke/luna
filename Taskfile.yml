@@ -1,6 +1,20 @@
 version: "3"
 
 tasks:
+  # Install repository-managed git hooks
+  install-hooks:
+    desc: Configure git to use hooks from .githooks
+    cmds:
+      - git config core.hooksPath .githooks
+      - chmod +x .githooks/pre-commit
+      - echo "Git hooks installed from .githooks"
+
+  # Run golangci-lint
+  lint:
+    desc: Run golangci-lint checks
+    cmds:
+      - golangci-lint run ./...
+
   # Build frontend with Vite
   build-frontend:
     desc: Build the Vue frontend
