@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var ErrPathTraversal = errors.New("path traversal attempt detected")
@@ -67,7 +68,7 @@ func SafeJoinItem(root, itemID, relPath string) (string, error) {
 	itemDir := filepath.Join(root, "items", itemID)
 	cleaned := filepath.Clean(filepath.Join(itemDir, relPath))
 
-	if !filepath.HasPrefix(cleaned, itemDir+string(filepath.Separator)) && cleaned != itemDir {
+	if !isWithinDir(itemDir, cleaned) {
 		return "", ErrEscapesItemDir
 	}
 
@@ -132,9 +133,20 @@ func SafeJoinAvatar(mediaRoot string, userID uint, personaID string, filename st
 	avatarDir := AvatarDir(mediaRoot, userID, personaID)
 	cleaned := filepath.Clean(filepath.Join(avatarDir, filename))
 
-	if !filepath.HasPrefix(cleaned, avatarDir+string(filepath.Separator)) && cleaned != avatarDir {
+	if !isWithinDir(avatarDir, cleaned) {
 		return "", ErrEscapesItemDir
 	}
 
 	return cleaned, nil
+}
+
+func isWithinDir(baseDir, candidate string) bool {
+	rel, err := filepath.Rel(baseDir, candidate)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

@@ -13,7 +13,9 @@ import (
 
 func TestMediaHandler_BlocksNonGETHEAD(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -34,14 +36,20 @@ func TestMediaHandler_BlocksNonGETHEAD(t *testing.T) {
 
 func TestMediaHandler_AllowsGET(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	itemID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	storage.EnsureItemDirs(mediaRoot, itemID)
+	if err := storage.EnsureItemDirs(mediaRoot, itemID); err != nil {
+		t.Fatalf("EnsureItemDirs failed: %v", err)
+	}
 
 	testContent := []byte("test video content")
 	testPath := filepath.Join(mediaRoot, "items", itemID, "original", "video.mp4")
-	os.WriteFile(testPath, testContent, 0644)
+	if err := os.WriteFile(testPath, testContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -62,7 +70,9 @@ func TestMediaHandler_AllowsGET(t *testing.T) {
 
 func TestMediaHandler_BlocksTraversal(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -88,10 +98,14 @@ func TestMediaHandler_BlocksTraversal(t *testing.T) {
 
 func TestMediaHandler_BlocksDirectoryListing(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	itemID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	storage.EnsureItemDirs(mediaRoot, itemID)
+	if err := storage.EnsureItemDirs(mediaRoot, itemID); err != nil {
+		t.Fatalf("EnsureItemDirs failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -107,7 +121,9 @@ func TestMediaHandler_BlocksDirectoryListing(t *testing.T) {
 
 func TestMediaHandler_BlocksNonexistent(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 
@@ -123,14 +139,20 @@ func TestMediaHandler_BlocksNonexistent(t *testing.T) {
 
 func TestMediaHandler_SupportsHEAD(t *testing.T) {
 	mediaRoot := t.TempDir()
-	storage.EnsureRootLayout(mediaRoot)
+	if err := storage.EnsureRootLayout(mediaRoot); err != nil {
+		t.Fatalf("EnsureRootLayout failed: %v", err)
+	}
 
 	itemID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	storage.EnsureItemDirs(mediaRoot, itemID)
+	if err := storage.EnsureItemDirs(mediaRoot, itemID); err != nil {
+		t.Fatalf("EnsureItemDirs failed: %v", err)
+	}
 
 	testContent := []byte("test content")
 	testPath := filepath.Join(mediaRoot, "items", itemID, "original", "test.mp4")
-	os.WriteFile(testPath, testContent, 0644)
+	if err := os.WriteFile(testPath, testContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	handler := New(mediaRoot)
 

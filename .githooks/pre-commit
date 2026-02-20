@@ -18,5 +18,8 @@ if [ -z "${staged_go_files}" ]; then
 fi
 
 echo "pre-commit: linting staged files"
+staged_go_dirs="$(printf '%s\n' "${staged_go_files}" | xargs -n1 dirname | sort -u)"
+lint_targets="$(printf '%s\n' "${staged_go_dirs}" | sed 's#^#./#')"
+
 # shellcheck disable=SC2086
-golangci-lint run ${staged_go_files}
+golangci-lint run ${lint_targets}

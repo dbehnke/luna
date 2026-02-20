@@ -170,10 +170,12 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateItemResponse{
+	if err := json.NewEncoder(w).Encode(CreateItemResponse{
 		ItemID:    itemID,
 		UploadURL: fmt.Sprintf("/api/items/%s/upload", itemID),
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode create item response: %v", err)
+	}
 }
 
 func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -204,7 +206,11 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close upload file for item %s: %v", itemID, closeErr)
+		}
+	}()
 
 	originalFilename := header.Filename
 	ext := strings.ToLower(filepath.Ext(originalFilename))
@@ -226,17 +232,28 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 		http.Error(w, fmt.Sprintf("Failed to create temp file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer tmpFile.Close()
+	defer func() {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close temp upload file for item %s: %v", itemID, closeErr)
+		}
+	}()
 
 	if _, err := io.Copy(tmpFile, file); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to finalize temp file: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to save file: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -283,10 +300,12 @@ func (h *Handler) UploadItem(w http.ResponseWriter, r *http.Request, itemID stri
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"item_id":   itemID,
 		"media_url": fmt.Sprintf("/media/%s/original/upload%s", itemID, ext),
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode upload response for item %s: %v", itemID, err)
+	}
 }
 
 func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
@@ -322,10 +341,12 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 			query = query.Where("id IN ?", favoriteItemIDs)
 		} else {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(ListItemsResponse{
+			if err := json.NewEncoder(w).Encode(ListItemsResponse{
 				Items:   []MediaItemResponse{},
 				HasMore: false,
-			})
+			}); err != nil {
+				logging.Error.Printf("Failed to encode empty list items response: %v", err)
+			}
 			return
 		}
 	}
@@ -477,11 +498,13 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListItemsResponse{
+	if err := json.NewEncoder(w).Encode(ListItemsResponse{
 		Items:   responses,
 		Cursor:  nextCursor,
 		HasMore: hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode list items response: %v", err)
+	}
 }
 
 func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -595,7 +618,9 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request, itemID string)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logging.Error.Printf("Failed to encode item response for %s: %v", itemID, err)
+	}
 }
 
 func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -631,13 +656,17 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request, itemID stri
 	if err == nil {
 		deletedAt := now.Format(time.RFC3339)
 		itemMeta.State.DeletedAt = &deletedAt
-		meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta)
+		if writeErr := meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta); writeErr != nil {
+			logging.Error.Printf("Failed to update item meta delete state for %s: %v", itemID, writeErr)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "deleted",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode delete response for %s: %v", itemID, err)
+	}
 }
 
 type CreateClipRequest struct {
@@ -678,11 +707,13 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 	if status != "ready" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(CreateClipResponse{
+		if err := json.NewEncoder(w).Encode(CreateClipResponse{
 			ClipID:  "",
 			Status:  "not_ready",
 			Message: fmt.Sprintf("Video processing status: %s", status),
-		})
+		}); err != nil {
+			logging.Error.Printf("Failed to encode not-ready clip response for %s: %v", itemID, err)
+		}
 		return
 	}
 
@@ -756,10 +787,12 @@ func (h *Handler) CreateClip(w http.ResponseWriter, r *http.Request, itemID stri
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateClipResponse{
+	if err := json.NewEncoder(w).Encode(CreateClipResponse{
 		ClipID: clipID,
 		Status: "queued",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode create clip response for %s: %v", itemID, err)
+	}
 }
 
 type ShortsClipResponse struct {
@@ -883,11 +916,13 @@ func (h *Handler) ListShorts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListShortsResponse{
+	if err := json.NewEncoder(w).Encode(ListShortsResponse{
 		Clips:   responses,
 		Cursor:  nextCursor,
 		HasMore: hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode list shorts response: %v", err)
+	}
 }
 
 type SetReactionRequest struct {
@@ -952,11 +987,13 @@ func (h *Handler) SetReaction(w http.ResponseWriter, r *http.Request, itemID str
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"up_count":      upCount,
 		"down_count":    downCount,
 		"user_reaction": userReaction,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode reaction response for %s: %v", itemID, err)
+	}
 }
 
 type SetFavoriteRequest struct {
@@ -1003,9 +1040,11 @@ func (h *Handler) SetFavorite(w http.ResponseWriter, r *http.Request, itemID str
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{
+	if err := json.NewEncoder(w).Encode(map[string]bool{
 		"is_favorited": req.Enabled,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode favorite response for %s: %v", itemID, err)
+	}
 }
 
 type SetHighlightRequest struct {
@@ -1049,13 +1088,17 @@ func (h *Handler) SetHighlight(w http.ResponseWriter, r *http.Request, itemID st
 	itemMeta, err := meta.ReadItemMetaByID(h.mediaRoot, itemID)
 	if err == nil {
 		itemMeta.State.Highlighted = req.Enabled
-		meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta)
+		if writeErr := meta.WriteItemMetaAtomic(h.mediaRoot, itemID, itemMeta); writeErr != nil {
+			logging.Error.Printf("Failed to update item meta highlight state for %s: %v", itemID, writeErr)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{
+	if err := json.NewEncoder(w).Encode(map[string]bool{
 		"is_highlighted": req.Enabled,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode highlight response for %s: %v", itemID, err)
+	}
 }
 
 func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID string) {
@@ -1098,9 +1141,11 @@ func (h *Handler) GetItemClips(w http.ResponseWriter, r *http.Request, itemID st
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"clips": responses,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode clips response for %s: %v", itemID, err)
+	}
 }
 
 type CurrentUserResponse struct {
@@ -1179,12 +1224,14 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	auth.SetSessionCookie(w, token, expiresAt)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CurrentUserResponse{
+	if err := json.NewEncoder(w).Encode(CurrentUserResponse{
 		ID:       user.ID,
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode login response for %s: %v", user.Username, err)
+	}
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -1200,9 +1247,11 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	auth.ClearSessionCookie(w)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "ok",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode logout response: %v", err)
+	}
 }
 
 func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
@@ -1213,12 +1262,14 @@ func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CurrentUserResponse{
+	if err := json.NewEncoder(w).Encode(CurrentUserResponse{
 		ID:       user.ID,
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode current user response for %s: %v", user.Username, err)
+	}
 }
 
 func (h *Handler) requireAdmin(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
@@ -1292,9 +1343,11 @@ func (h *Handler) AdminListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"users": resp,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode admin user list response: %v", err)
+	}
 }
 
 func (h *Handler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -1349,7 +1402,9 @@ func (h *Handler) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(userToAdminResponse(user))
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin create user response for %s: %v", user.Username, err)
+	}
 }
 
 type SetAdminUserRoleRequest struct {
@@ -1379,7 +1434,9 @@ func (h *Handler) AdminSetUserRole(w http.ResponseWriter, r *http.Request, usern
 	}
 	if user.Role == role {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(userToAdminResponse(user))
+		if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+			logging.Error.Printf("Failed to encode admin set-role noop response for %s: %v", user.Username, err)
+		}
 		return
 	}
 	if err := useradmin.EnsureCanChangeRole(h.db, user, role); err != nil {
@@ -1394,7 +1451,9 @@ func (h *Handler) AdminSetUserRole(w http.ResponseWriter, r *http.Request, usern
 	user.Role = role
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(userToAdminResponse(user))
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin set-role response for %s: %v", user.Username, err)
+	}
 }
 
 func (h *Handler) AdminDeactivateUser(w http.ResponseWriter, r *http.Request, username string) {
@@ -1409,7 +1468,9 @@ func (h *Handler) AdminDeactivateUser(w http.ResponseWriter, r *http.Request, us
 	}
 	if !user.IsActive {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(userToAdminResponse(user))
+		if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+			logging.Error.Printf("Failed to encode admin deactivate noop response for %s: %v", user.Username, err)
+		}
 		return
 	}
 	if err := useradmin.EnsureCanDeactivate(h.db, user); err != nil {
@@ -1431,7 +1492,9 @@ func (h *Handler) AdminDeactivateUser(w http.ResponseWriter, r *http.Request, us
 	user.IsActive = false
 	user.DeactivatedAt = &now
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(userToAdminResponse(user))
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin deactivate response for %s: %v", user.Username, err)
+	}
 }
 
 func (h *Handler) AdminActivateUser(w http.ResponseWriter, r *http.Request, username string) {
@@ -1446,7 +1509,9 @@ func (h *Handler) AdminActivateUser(w http.ResponseWriter, r *http.Request, user
 	}
 	if user.IsActive {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(userToAdminResponse(user))
+		if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+			logging.Error.Printf("Failed to encode admin activate noop response for %s: %v", user.Username, err)
+		}
 		return
 	}
 
@@ -1461,7 +1526,9 @@ func (h *Handler) AdminActivateUser(w http.ResponseWriter, r *http.Request, user
 	user.IsActive = true
 	user.DeactivatedAt = nil
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(userToAdminResponse(user))
+	if err := json.NewEncoder(w).Encode(userToAdminResponse(user)); err != nil {
+		logging.Error.Printf("Failed to encode admin activate response for %s: %v", user.Username, err)
+	}
 }
 
 type ResetAdminUserPasswordRequest struct {
@@ -1502,7 +1569,9 @@ func (h *Handler) AdminSetUserPassword(w http.ResponseWriter, r *http.Request, u
 	h.db.Where("user_id = ?", user.ID).Delete(&models.Session{})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		logging.Error.Printf("Failed to encode admin password response for %s: %v", user.Username, err)
+	}
 }
 
 type CreatePersonaRequest struct {
@@ -1564,7 +1633,9 @@ func (h *Handler) CreatePersona(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(personaToResponse(persona))
+	if err := json.NewEncoder(w).Encode(personaToResponse(persona)); err != nil {
+		logging.Error.Printf("Failed to encode create persona response for %s: %v", persona.ID, err)
+	}
 }
 
 func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
@@ -1586,9 +1657,11 @@ func (h *Handler) ListPersonas(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"personas": responses,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode list personas response: %v", err)
+	}
 }
 
 type UpdatePersonaRequest struct {
@@ -1647,7 +1720,9 @@ func (h *Handler) UpdatePersona(w http.ResponseWriter, r *http.Request, personaI
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(personaToResponse(persona))
+	if err := json.NewEncoder(w).Encode(personaToResponse(persona)); err != nil {
+		logging.Error.Printf("Failed to encode update persona response for %s: %v", persona.ID, err)
+	}
 }
 
 func (h *Handler) DeletePersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1679,9 +1754,11 @@ func (h *Handler) DeletePersona(w http.ResponseWriter, r *http.Request, personaI
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "deleted",
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode delete persona response for %s: %v", personaID, err)
+	}
 }
 
 func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request, personaID string) {
@@ -1708,7 +1785,9 @@ func (h *Handler) GetPersona(w http.ResponseWriter, r *http.Request, personaID s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(personaToResponse(persona))
+	if err := json.NewEncoder(w).Encode(personaToResponse(persona)); err != nil {
+		logging.Error.Printf("Failed to encode get persona response for %s: %v", persona.ID, err)
+	}
 }
 
 func avatarURL(avatarPath string) string {
@@ -1801,7 +1880,11 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close avatar upload file for persona %s: %v", personaID, closeErr)
+		}
+	}()
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
@@ -1829,17 +1912,26 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 	}
 
 	if _, err := io.Copy(tmpFile, file); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			logging.Error.Printf("Failed to close temp avatar file %s: %v", tmpPath, closeErr)
+		}
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp avatar file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to finalize avatar upload: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	avatarPath := storage.AvatarPath(h.mediaRoot, user.ID, personaID)
 
 	if err := os.Rename(tmpPath, avatarPath); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logging.Error.Printf("Failed to remove temp avatar file %s: %v", tmpPath, removeErr)
+		}
 		http.Error(w, fmt.Sprintf("Failed to save avatar: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1854,9 +1946,11 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request, personaID
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(UploadAvatarResponse{
+	if err := json.NewEncoder(w).Encode(UploadAvatarResponse{
 		AvatarURL: avatarURL(relPath),
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode upload avatar response for %s: %v", personaID, err)
+	}
 }
 
 type ProfileResponse struct {
@@ -1899,7 +1993,9 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request, slug string
 	resp.Counts.Shorts = shortCount
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logging.Error.Printf("Failed to encode profile response for %s: %v", slug, err)
+	}
 }
 
 type ProfileItemResponse struct {
@@ -2035,11 +2131,13 @@ func (h *Handler) GetProfileItems(w http.ResponseWriter, r *http.Request, slug s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ProfileItemsResponse{
+	if err := json.NewEncoder(w).Encode(ProfileItemsResponse{
 		Items:      responses,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode profile items response for %s: %v", slug, err)
+	}
 }
 
 type ProfileShortResponse struct {
@@ -2143,9 +2241,11 @@ func (h *Handler) GetProfileShorts(w http.ResponseWriter, r *http.Request, slug 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ProfileShortsResponse{
+	if err := json.NewEncoder(w).Encode(ProfileShortsResponse{
 		Shorts:     responses,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
-	})
+	}); err != nil {
+		logging.Error.Printf("Failed to encode profile shorts response for %s: %v", slug, err)
+	}
 }

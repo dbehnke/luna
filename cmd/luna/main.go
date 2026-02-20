@@ -38,21 +38,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type itemIDKey string
-
-const itemIDContextKey itemIDKey = "itemID"
-
-func withItemID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, itemIDContextKey, id)
-}
-
-func getItemID(ctx context.Context) string {
-	if id, ok := ctx.Value(itemIDContextKey).(string); ok {
-		return id
-	}
-	return ""
-}
-
 func main() {
 	logging.Init()
 
@@ -95,7 +80,7 @@ func serveCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			if err := database.AutoMigrate(); err != nil {
 				return fmt.Errorf("run migrations: %w", err)
@@ -344,7 +329,9 @@ func serveCommand(cfg *config.Config) *cli.Command {
 				if err != nil {
 					return fmt.Errorf("listen on %s: %w", addr, err)
 				}
-				ln.Close()
+				if err := ln.Close(); err != nil {
+					return fmt.Errorf("close listener: %w", err)
+				}
 			}
 
 			server := &http.Server{
@@ -382,7 +369,9 @@ func findAvailablePort(addr string) (string, error) {
 		testAddr := fmt.Sprintf("%s:%d", host, port+i)
 		ln, err := net.Listen("tcp", testAddr)
 		if err == nil {
-			ln.Close()
+			if err := ln.Close(); err != nil {
+				return "", fmt.Errorf("close listener: %w", err)
+			}
 			if i > 0 {
 				logging.Info.Printf("Port %s was in use, using %s instead", portStr, testAddr)
 			}
@@ -450,7 +439,7 @@ func userCreateCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			var existing models.User
 			if err := database.Where("username = ?", username).First(&existing).Error; err == nil {
@@ -500,7 +489,7 @@ func userListCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			query := database.Model(&models.User{})
 			if showActive {
@@ -516,19 +505,23 @@ func userListCommand(cfg *config.Config) *cli.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tUSERNAME\tROLE\tSTATUS\tCREATED")
+			if _, err := fmt.Fprintln(w, "ID\tUSERNAME\tROLE\tSTATUS\tCREATED"); err != nil {
+				return fmt.Errorf("write user list header: %w", err)
+			}
 			for _, user := range users {
 				status := "active"
 				if !user.IsActive {
 					status = "inactive"
 				}
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n",
+				if _, err := fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n",
 					user.ID,
 					user.Username,
 					user.Role,
 					status,
 					user.CreatedAt.UTC().Format(time.RFC3339),
-				)
+				); err != nil {
+					return fmt.Errorf("write user list row: %w", err)
+				}
 			}
 			_ = w.Flush()
 			return nil
@@ -557,7 +550,7 @@ func userSetRoleCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			var user models.User
 			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
@@ -596,7 +589,7 @@ func userDeactivateCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			var user models.User
 			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
@@ -642,7 +635,7 @@ func userActivateCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			var user models.User
 			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
@@ -686,7 +679,7 @@ func userPasswdCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			var user models.User
 			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
@@ -724,7 +717,7 @@ func userPurgeCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			var user models.User
 			if err := database.Where("username = ?", username).First(&user).Error; err != nil {
@@ -925,7 +918,7 @@ func workerCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			if err := database.AutoMigrate(); err != nil {
 				return fmt.Errorf("run migrations: %w", err)
@@ -981,7 +974,9 @@ func workerCommand(cfg *config.Config) *cli.Command {
 				payload, err := jobs.GetJobPayload(job)
 				if err != nil {
 					logging.Error.Printf("Failed to parse payload: %v", err)
-					jobQueue.Fail(job.ID, fmt.Sprintf("Failed to parse payload: %v", err))
+					if failErr := jobQueue.Fail(job.ID, fmt.Sprintf("Failed to parse payload: %v", err)); failErr != nil {
+						logging.Error.Printf("Failed to update failed job %d: %v", job.ID, failErr)
+					}
 					continue
 				}
 
@@ -996,7 +991,7 @@ func workerCommand(cfg *config.Config) *cli.Command {
 						assetsMeta, err := meta.ReadAssetsMetaByID(cfg.MediaRoot, j.ItemID)
 						isAudio := err == nil && assetsMeta != nil && assetsMeta.SourceInfo != nil && assetsMeta.SourceInfo.VideoCodec == "" && assetsMeta.SourceInfo.AudioCodec != ""
 						if !isAudio {
-							_, hlsErr := jobQueue.Enqueue(models.JobTypeHLS, models.JobStatusQueued, 40, jobs.HLSPayload{ItemID: j.ItemID})
+							_, hlsErr := jobQueue.Enqueue(models.JobTypeHLS, models.JobStatusQueued, 40, jobs.HLSPayload(j))
 							if hlsErr != nil {
 								logging.Error.Printf("Failed to enqueue HLS job: %v", hlsErr)
 							}
@@ -1017,15 +1012,23 @@ func workerCommand(cfg *config.Config) *cli.Command {
 
 				if execErr != nil {
 					logging.Error.Printf("Job %d failed: %v", job.ID, execErr)
-					jobQueue.Fail(job.ID, execErr.Error())
+					if failErr := jobQueue.Fail(job.ID, execErr.Error()); failErr != nil {
+						logging.Error.Printf("Failed to update failed job %d: %v", job.ID, failErr)
+					}
 					if clipID != "" {
-						jobQueue.UpdateClipStatus(clipID, models.ClipStatusFailed)
+						if clipErr := jobQueue.UpdateClipStatus(clipID, models.ClipStatusFailed); clipErr != nil {
+							logging.Error.Printf("Failed to update clip %s status: %v", clipID, clipErr)
+						}
 					}
 				} else {
 					logging.Info.Printf("Job %d completed successfully", job.ID)
-					jobQueue.Complete(job.ID)
+					if completeErr := jobQueue.Complete(job.ID); completeErr != nil {
+						logging.Error.Printf("Failed to mark job %d complete: %v", job.ID, completeErr)
+					}
 					if clipID != "" {
-						jobQueue.UpdateClipStatus(clipID, models.ClipStatusReady)
+						if clipErr := jobQueue.UpdateClipStatus(clipID, models.ClipStatusReady); clipErr != nil {
+							logging.Error.Printf("Failed to update clip %s status: %v", clipID, clipErr)
+						}
 					}
 				}
 			}
@@ -1066,7 +1069,7 @@ func importCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			if err := database.AutoMigrate(); err != nil {
 				return fmt.Errorf("run migrations: %w", err)
@@ -1122,17 +1125,17 @@ func importCommand(cfg *config.Config) *cli.Command {
 				destPath := filepath.Join(cfg.MediaRoot, "items", itemID, "original", "upload"+ext)
 				destFile, err := os.Create(destPath)
 				if err != nil {
-					srcFile.Close()
+					_ = srcFile.Close()
 					return fmt.Errorf("create dest file %s: %w", destPath, err)
 				}
 
 				if _, err := io.Copy(destFile, srcFile); err != nil {
-					srcFile.Close()
-					destFile.Close()
+					_ = srcFile.Close()
+					_ = destFile.Close()
 					return fmt.Errorf("copy %s to %s: %w", path, destPath, err)
 				}
 				if err := srcFile.Close(); err != nil {
-					destFile.Close()
+					_ = destFile.Close()
 					return fmt.Errorf("close source file %s: %w", path, err)
 				}
 				if err := destFile.Close(); err != nil {
@@ -1259,7 +1262,7 @@ func rebuildDBCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			if err := database.DropTable(
 				&models.MediaItem{},
@@ -1552,7 +1555,7 @@ func doctorCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				logging.Error.Printf("Failed to connect to database: %v", err)
 			} else {
-				defer database.Close()
+				defer closeDB(database)
 
 				if err := database.AutoMigrate(); err != nil {
 					logging.Error.Printf("Failed to run migrations: %v", err)
@@ -1772,7 +1775,7 @@ func reconcileCommand(cfg *config.Config) *cli.Command {
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}
-			defer database.Close()
+			defer closeDB(database)
 
 			if err := database.AutoMigrate(); err != nil {
 				return fmt.Errorf("run migrations: %w", err)
@@ -2098,9 +2101,17 @@ func waitForShutdown(server *http.Server) {
 	if server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			logging.Error.Printf("Server shutdown error: %v", err)
+		}
 	}
 	logging.Info.Println("Shutdown complete")
+}
+
+func closeDB(database *db.DB) {
+	if err := database.Close(); err != nil {
+		logging.Error.Printf("Failed to close database: %v", err)
+	}
 }
 
 func inferMediaTypeByExt(ext string) string {

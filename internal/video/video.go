@@ -177,7 +177,7 @@ func (p *Processor) Transcode(itemID string, probeResult *ProbeResult) error {
 	outputPath := filepath.Join(derivedDir, "master.mp4")
 
 	tmpOutput := outputPath + ".tmp"
-	defer os.Remove(tmpOutput)
+	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := MasterTranscodeArgs(originalFile, tmpOutput, *probeResult)
 
@@ -268,7 +268,7 @@ func (p *Processor) TranscodeAudio(itemID string, probeResult *ProbeResult) erro
 	outputPath := filepath.Join(derivedDir, "master.m4a")
 
 	tmpOutput := outputPath + ".tmp"
-	defer os.Remove(tmpOutput)
+	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := AudioTranscodeArgs(originalFile, tmpOutput)
 
@@ -365,7 +365,7 @@ func (p *Processor) GenerateThumbnails(itemID string, duration float64) error {
 		outputPath := filepath.Join(thumbsDir, fmt.Sprintf("t_%04d.webp", i+1))
 
 		tmpOutput := outputPath + ".tmp"
-		defer os.Remove(tmpOutput)
+		defer func() { _ = os.Remove(tmpOutput) }()
 
 		cmd := exec.Command("ffmpeg",
 			"-y",
@@ -507,7 +507,7 @@ func (p *Processor) ProcessClip(itemID, clipID string, startMs, endMs int64) err
 	outputPath := filepath.Join(derivedDir, fmt.Sprintf("short_%s.mp4", clipID))
 
 	tmpOutput := outputPath + ".tmp"
-	defer os.Remove(tmpOutput)
+	defer func() { _ = os.Remove(tmpOutput) }()
 
 	args := ClipTranscodeArgs(inputPath, tmpOutput, ProbeResult{}, startMs, endMs)
 
@@ -584,18 +584,18 @@ func (p *Processor) ProcessHLS(itemID string) error {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("ffmpeg hls failed: %w, stderr: %s", err, stderr.String())
 	}
 
 	indexPath := filepath.Join(tmpDir, "index.m3u8")
 	if _, err := os.Stat(indexPath); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("hls index.m3u8 not created: %w", err)
 	}
 
 	if err := os.Rename(tmpDir, hlsDir); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return fmt.Errorf("rename hls dir: %w", err)
 	}
 
@@ -675,7 +675,7 @@ func (p *Processor) ProcessPhoto(itemID string) error {
 
 	writeResized := func(outputPath string, size int) error {
 		tmpOutput := outputPath + ".tmp"
-		defer os.Remove(tmpOutput)
+		defer func() { _ = os.Remove(tmpOutput) }()
 
 		cmd := exec.Command("ffmpeg",
 			"-y",

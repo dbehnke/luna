@@ -48,13 +48,13 @@ func Restore(snapshotPath string, opts RestoreOptions) (*RestoreResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open snapshot: %w", err)
 	}
-	defer snapshotFile.Close()
+	defer func() { _ = snapshotFile.Close() }()
 
 	gzr, err := gzip.NewReader(snapshotFile)
 	if err != nil {
 		return nil, fmt.Errorf("create gzip reader: %w", err)
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 
@@ -154,7 +154,7 @@ func extractFile(tr *tar.Reader, destPath string, size int64) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = io.CopyN(f, tr, size)
 	if err != nil && err != io.EOF {

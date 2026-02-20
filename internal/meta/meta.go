@@ -130,27 +130,27 @@ func WriteFileAtomic(path string, data []byte) error {
 
 	_, err = f.Write(data)
 	if err != nil {
-		f.Close()
-		os.Remove(tmpFile)
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("write temp file: %w", err)
 	}
 
 	err = f.Sync()
 	if err != nil {
-		f.Close()
-		os.Remove(tmpFile)
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("sync temp file: %w", err)
 	}
 
 	err = f.Close()
 	if err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
 	err = os.Rename(tmpFile, path)
 	if err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 
