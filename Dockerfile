@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
-# Stage 1: Build frontend assets with Bun
-FROM oven/bun:1 AS frontend-builder
+# Stage 1: Build frontend assets with Node (more stable on low-memory builders)
+FROM node:22-bookworm-slim AS frontend-builder
 WORKDIR /src/web
-COPY web/bun.lock web/package.json ./
-RUN bun install --frozen-lockfile
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY web/ ./
-RUN bun run build
+RUN npm run build
 
 # Stage 2: Build Go binary with embedded frontend
 FROM golang:1.25-bookworm AS go-builder

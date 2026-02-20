@@ -235,7 +235,7 @@ Container runtime paths:
 - `MEDIA_ROOT=/data/media`
 - `SQLITE_PATH=/data/db/app.sqlite`
 
-The Docker build uses Bun only in the frontend build stage, then copies built assets into the Go build stage, and runs on a runtime image with `ffmpeg` installed.
+The Docker build uses Node/npm in the frontend build stage, then copies built assets into the Go build stage, and runs on a runtime image with `ffmpeg` installed.
 
 ## Operational Notes
 
