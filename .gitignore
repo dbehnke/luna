@@ -1,5 +1,6 @@
 # Binaries
 luna
+app
 *.exe
 *.dll
 *.so
