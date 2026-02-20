@@ -335,6 +335,8 @@ const clipError = ref('')
 const videoElement = ref(null)
 const hlsPlayer = ref(null)
 let hlsModulePromise = null
+let statusPollTimer = null
+let statusPollInFlight = false
 const editing = ref(false)
 const savingEdit = ref(false)
 const reprocessing = ref(false)
@@ -438,28 +440,80 @@ watch(
 
 onMounted(loadItem)
 onUnmounted(() => {
+  stopStatusPolling()
   if (hlsPlayer.value) {
     hlsPlayer.value.destroy()
     hlsPlayer.value = null
   }
 })
 
-async function loadItem() {
-  loading.value = true
-  error.value = ''
+function shouldPollStatus() {
+  if (!item.value) return false
+  if (item.value.type !== 'video' && item.value.type !== 'audio') return false
+
+  const status = (item.value.processing_status || '').toLowerCase()
+  if (status === '' || status === 'queued' || status === 'processing') {
+    return true
+  }
+  if (item.value.type === 'video' && status === 'ready' && !item.value.hls_url) {
+    return true
+  }
+  return false
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer) {
+    clearTimeout(statusPollTimer)
+    statusPollTimer = null
+  }
+}
+
+function scheduleStatusPolling() {
+  stopStatusPolling()
+  if (!shouldPollStatus()) return
+
+  statusPollTimer = setTimeout(async () => {
+    if (statusPollInFlight) {
+      scheduleStatusPolling()
+      return
+    }
+
+    statusPollInFlight = true
+    try {
+      await loadItem({ silent: true })
+    } catch (_) {
+      // ignore transient polling errors
+    } finally {
+      statusPollInFlight = false
+      scheduleStatusPolling()
+    }
+  }, 3000)
+}
+
+async function loadItem(options = {}) {
+  const silent = options.silent === true
+  if (!silent) {
+    loading.value = true
+    error.value = ''
+  }
 
   try {
     currentUser.value = await getCurrentUser()
     item.value = await getItem(route.params.id)
     await nextTick()
     await initHLS()
+    scheduleStatusPolling()
     if (item.value.type === 'video') {
       await loadClips()
     }
   } catch (e) {
-    error.value = e.message
+    if (!silent) {
+      error.value = e.message
+    }
   } finally {
-    loading.value = false
+    if (!silent) {
+      loading.value = false
+    }
   }
 }
 
