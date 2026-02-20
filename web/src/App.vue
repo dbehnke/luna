@@ -29,11 +29,14 @@
         <router-link
           to="/"
           class="h-12 rounded-xl bg-[#0a2540] text-white flex items-center"
-          :class="sidebarPinned ? 'px-3 gap-2 flex-1' : 'w-12 justify-center'"
+          :class="sidebarPinned ? 'px-3 flex-1 justify-center' : 'w-12 justify-center'"
           title="Home"
         >
-          <img :src="lunaMark" alt="Luna" class="w-7 h-7 shrink-0" />
-          <span v-if="sidebarPinned" class="font-semibold">Luna</span>
+          <img
+            :src="sidebarPinned ? lunaLogoFull : lunaMark"
+            alt="Luna"
+            :class="sidebarPinned ? 'h-8 w-full object-contain' : 'w-7 h-7 shrink-0'"
+          />
         </router-link>
         <button
           class="h-12 rounded-xl bg-[#0a2540] text-gray-200 hover:bg-[#12365d] flex items-center justify-center"
@@ -149,6 +152,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getCurrentUser, logout } from "./services/api";
 import lunaMark from "/src/assets/brand/luna-mark.png";
+import lunaLogoFull from "/src/assets/brand/luna-logo-full.png";
 
 const route = useRoute();
 const router = useRouter();
