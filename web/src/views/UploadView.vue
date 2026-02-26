@@ -38,6 +38,17 @@
               >
                 Photo
               </button>
+              <button
+                @click="mediaType = 'audio'"
+                :class="[
+                  'flex-1 py-3 rounded-lg font-medium transition-colors',
+                  mediaType === 'audio'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300'
+                ]"
+              >
+                Audio
+              </button>
             </div>
           </div>
 
@@ -115,7 +126,7 @@
             <input
               ref="fileInput"
               type="file"
-              :accept="mediaType === 'video' ? 'video/*' : 'image/*'"
+              :accept="acceptType()"
               @change="handleFileSelect"
               class="hidden"
             />
@@ -125,7 +136,7 @@
                 {{ dragOver ? 'Drop file here' : 'Drag & drop or click to select' }}
               </p>
               <p class="text-sm text-gray-500">
-                {{ mediaType === 'video' ? 'Video files supported' : 'Image files supported' }}
+                {{ supportedTypeLabel() }}
               </p>
               <button
                 @click="$refs.fileInput.click()"
@@ -163,7 +174,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { createItem, uploadFile, getPersonas } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
@@ -207,6 +218,32 @@ const dragOver = ref(false)
 const uploading = ref(false)
 const uploadError = ref('')
 
+watch(mediaType, () => {
+  selectedFile.value = null
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
+})
+
+function acceptType() {
+  if (mediaType.value === 'video') return 'video/*'
+  if (mediaType.value === 'photo') return 'image/*'
+  return 'audio/*'
+}
+
+function supportedTypeLabel() {
+  if (mediaType.value === 'video') return 'Video files supported'
+  if (mediaType.value === 'photo') return 'Image files supported'
+  return 'Audio files supported'
+}
+
+function matchesSelectedType(file) {
+  if (!file?.type) return false
+  if (mediaType.value === 'video') return file.type.startsWith('video/')
+  if (mediaType.value === 'photo') return file.type.startsWith('image/')
+  return file.type.startsWith('audio/')
+}
+
 async function doCreateItem() {
   creating.value = true
   error.value = ''
@@ -223,7 +260,7 @@ async function doCreateItem() {
 
 function handleFileSelect(e) {
   const file = e.target.files[0]
-  if (file) {
+  if (file && matchesSelectedType(file)) {
     selectedFile.value = file
   }
 }
@@ -231,12 +268,8 @@ function handleFileSelect(e) {
 function handleDrop(e) {
   dragOver.value = false
   const file = e.dataTransfer.files[0]
-  if (file) {
-    const isVideo = file.type.startsWith('video/')
-    const isImage = file.type.startsWith('image/')
-    if ((mediaType.value === 'video' && isVideo) || (mediaType.value === 'photo' && isImage)) {
-      selectedFile.value = file
-    }
+  if (file && matchesSelectedType(file)) {
+    selectedFile.value = file
   }
 }
 

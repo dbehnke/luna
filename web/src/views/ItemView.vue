@@ -241,6 +241,35 @@
           </div>
         </div>
 
+        <div v-if="canManageItem" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="block text-gray-400 text-sm mb-1">Persona</label>
+            <select
+              v-model="clipPersonaId"
+              class="w-full bg-gray-800 text-white px-3 py-2 rounded-lg"
+            >
+              <option value="">No persona</option>
+              <option
+                v-for="persona in personas"
+                :key="persona.id"
+                :value="persona.id"
+              >
+                {{ persona.display_name }}
+              </option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-gray-400 text-sm mb-1">Short description</label>
+            <input
+              v-model="clipDescription"
+              type="text"
+              maxlength="500"
+              class="w-full bg-gray-800 text-white px-3 py-2 rounded-lg"
+              placeholder="Optional description"
+            />
+          </div>
+        </div>
+
         <p v-if="clipError" class="text-red-400 text-sm mb-4">{{ clipError }}</p>
 
         <div class="flex gap-4">
@@ -284,7 +313,7 @@
               </div>
             </div>
             <div class="p-2">
-              <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center justify-between gap-2 mb-2">
                 <p class="text-gray-400 text-xs">{{ formatDuration(clip.duration_ms) }}</p>
                 <button
                   v-if="canManageItem"
@@ -293,6 +322,43 @@
                   class="text-red-300 hover:text-red-200 disabled:text-gray-500 text-xs"
                 >
                   {{ deletingClipId === clip.clip_id ? 'Removing...' : 'Remove' }}
+                </button>
+              </div>
+              <p v-if="clip.description" class="text-gray-300 text-xs mb-2 line-clamp-2">{{ clip.description }}</p>
+              <PersonaBadge
+                v-if="getPersonaDisplayName(clip)"
+                :display-name="getPersonaDisplayName(clip)"
+                :avatar-url="getPersonaAvatarUrl(clip)"
+                :slug="getPersonaSlug(clip)"
+                class="mb-2"
+              />
+              <div v-if="canManageItem" class="space-y-2">
+                <select
+                  v-model="clip.edit_persona_id"
+                  class="w-full bg-gray-900 text-white px-2 py-1 rounded text-xs"
+                >
+                  <option value="">No persona</option>
+                  <option
+                    v-for="persona in personas"
+                    :key="persona.id"
+                    :value="persona.id"
+                  >
+                    {{ persona.display_name }}
+                  </option>
+                </select>
+                <textarea
+                  v-model="clip.edit_description"
+                  rows="2"
+                  maxlength="500"
+                  class="w-full bg-gray-900 text-white px-2 py-1 rounded text-xs resize-none"
+                  placeholder="Description"
+                />
+                <button
+                  @click="saveClipMeta(clip)"
+                  :disabled="savingClipId === clip.clip_id"
+                  class="w-full bg-indigo-700 hover:bg-indigo-600 disabled:bg-gray-600 text-white px-2 py-1 rounded text-xs"
+                >
+                  {{ savingClipId === clip.clip_id ? 'Saving...' : 'Save Meta' }}
                 </button>
               </div>
             </div>
@@ -327,7 +393,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getItem, deleteItem, createClip, getItemClips, deleteClip, setItemThumbnail, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, updateItem, reprocessItem } from '../services/api'
+import { getItem, deleteItem, createClip, getItemClips, deleteClip, updateClip, setItemThumbnail, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug, setFavorite, setHighlight, getCurrentUser, getPersonas, updateItem, reprocessItem } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
@@ -343,6 +409,10 @@ const clipStart = ref(0)
 const clipEnd = ref(10)
 const clipCreating = ref(false)
 const clipError = ref('')
+const personas = ref([])
+const clipPersonaId = ref('')
+const clipDescription = ref('')
+const savingClipId = ref('')
 const videoElement = ref(null)
 const hlsPlayer = ref(null)
 let hlsModulePromise = null
@@ -551,6 +621,12 @@ async function loadItem(options = {}) {
   try {
     currentUser.value = await getCurrentUser()
     item.value = await getItem(route.params.id)
+    if (!silent || clipPersonaId.value === '') {
+      clipPersonaId.value = item.value?.persona_id || ''
+    }
+    if (item.value?.can_manage || isAdmin.value || isOwner.value) {
+      await loadPersonas(item.value.user_id)
+    }
     await nextTick()
     await initHLS()
     scheduleStatusPolling()
@@ -568,10 +644,25 @@ async function loadItem(options = {}) {
   }
 }
 
+async function loadPersonas(ownerUserId) {
+  try {
+    const options = {}
+    if (isAdmin.value && ownerUserId && currentUser.value && ownerUserId !== currentUser.value.id) {
+      options.userId = ownerUserId
+    }
+    const result = await getPersonas(options)
+    personas.value = result.personas || []
+  } catch (e) {
+    console.error('Failed to load personas:', e)
+    personas.value = []
+  }
+}
+
 async function loadClips() {
   try {
     const result = await getItemClips(route.params.id)
     clips.value = result.clips || []
+    clips.value.forEach(ensureClipDraft)
     scheduleClipsPolling()
   } catch (e) {
     console.error('Failed to load clips:', e)
@@ -667,14 +758,49 @@ async function createNewClip() {
   clipCreating.value = true
 
   try {
-    await createClip(route.params.id, startMs, endMs)
+    await createClip(route.params.id, startMs, endMs, {
+      personaId: clipPersonaId.value || null,
+      description: clipDescription.value.trim(),
+    })
     clipStart.value = 0
     clipEnd.value = 10
+    clipDescription.value = ''
     await loadClips()
   } catch (e) {
     clipError.value = e.message
   } finally {
     clipCreating.value = false
+  }
+}
+
+function ensureClipDraft(clip) {
+  if (!clip) return
+  if (typeof clip.edit_persona_id === 'undefined') {
+    clip.edit_persona_id = clip.persona_id || ''
+  }
+  if (typeof clip.edit_description === 'undefined') {
+    clip.edit_description = clip.description || ''
+  }
+}
+
+async function saveClipMeta(clip) {
+  if (!item.value || !clip || savingClipId.value) return
+  savingClipId.value = clip.clip_id
+  clipError.value = ''
+  try {
+    const updated = await updateClip(item.value.id, clip.clip_id, {
+      persona_id: clip.edit_persona_id || null,
+      description: (clip.edit_description || '').trim(),
+    })
+    clip.persona_id = updated.persona_id || null
+    clip.persona_slug = updated.persona_slug || null
+    clip.persona_display_name = updated.persona_display_name || null
+    clip.persona_avatar_url = updated.persona_avatar_url || null
+    clip.description = updated.description || ''
+  } catch (e) {
+    clipError.value = e.message
+  } finally {
+    savingClipId.value = ''
   }
 }
 

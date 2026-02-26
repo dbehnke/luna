@@ -312,6 +312,10 @@ func serveCommand(cfg *config.Config) *cli.Command {
 							h.DeleteClip(w, r, parts[0], parts[1])
 							return
 						}
+						if len(parts) == 2 && parts[0] != "" && parts[1] != "" && (r.Method == "PATCH" || r.Method == "PUT") {
+							h.UpdateClip(w, r, parts[0], parts[1])
+							return
+						}
 					}
 
 					if r.Method == "GET" && strings.HasSuffix(id, "/clips") {
@@ -392,6 +396,14 @@ func serveCommand(cfg *config.Config) *cli.Command {
 						slug = strings.TrimSuffix(slug, "/shorts")
 						if r.Method == "GET" {
 							h.GetProfileShorts(w, r, slug)
+							return
+						}
+					}
+
+					if strings.HasSuffix(slug, "/audio") {
+						slug = strings.TrimSuffix(slug, "/audio")
+						if r.Method == "GET" {
+							h.GetProfileAudio(w, r, slug)
 							return
 						}
 					}

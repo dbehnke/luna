@@ -133,7 +133,9 @@ type Job struct {
 type ClipAsset struct {
 	ID          string    `gorm:"primaryKey;size:26" json:"id"` // ULID string
 	ItemID      string    `gorm:"index;not null" json:"item_id"`
+	PersonaID   *string   `gorm:"index" json:"persona_id,omitempty"`
 	StoragePath string    `gorm:"size:512" json:"storage_path"`
+	Description string    `gorm:"type:text" json:"description"`
 	Status      string    `gorm:"size:50;default:pending" json:"status"`
 	StartMs     int64     `json:"start_ms"`
 	EndMs       int64     `json:"end_ms"`
