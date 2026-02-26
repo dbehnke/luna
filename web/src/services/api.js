@@ -119,10 +119,7 @@ export async function reprocessItem(id) {
   const res = await fetch(`${API_BASE}/api/items/${id}/reprocess`, {
     method: "POST",
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "Failed to reprocess item");
-  }
+  if (!res.ok) throw new Error("Failed to reprocess item");
   return res.json();
 }
 
@@ -182,10 +179,7 @@ export async function deleteClip(itemId, clipId) {
   const res = await fetch(`${API_BASE}/api/items/${itemId}/clips/${clipId}`, {
     method: "DELETE",
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "Failed to delete clip");
-  }
+  if (!res.ok) throw new Error("Failed to delete clip");
   return res.json();
 }
 
@@ -196,6 +190,16 @@ export async function listShorts(options = {}) {
 
   const res = await fetch(`${API_BASE}/api/shorts?${params}`);
   if (!res.ok) throw new Error("Failed to list shorts");
+  return res.json();
+}
+
+export async function getShortsFeed(options = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.append("limit", options.limit);
+  if (options.cursor) params.append("cursor", options.cursor);
+
+  const res = await fetch(`${API_BASE}/api/shorts/feed?${params}`);
+  if (!res.ok) throw new Error("Failed to get shorts feed");
   return res.json();
 }
 
