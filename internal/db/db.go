@@ -49,6 +49,7 @@ func (d *DB) AutoMigrate() error {
 		&models.Playlist{},
 		&models.PlaylistItem{},
 		&models.SchemaVersion{},
+		&models.SessionFeedState{},
 	); err != nil {
 		return err
 	}

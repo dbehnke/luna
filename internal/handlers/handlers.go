@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -2925,5 +2926,173 @@ func (h *Handler) GetProfileAudio(w http.ResponseWriter, r *http.Request, slug s
 		HasMore:    hasMore,
 	}); err != nil {
 		logging.Error.Printf("Failed to encode profile audio response for %s: %v", slug, err)
+	}
+}
+// GetFeedShuffle handles GET /api/shorts/feed - returns a shuffled feed of shorts with no-repeat logic.
+func (h *Handler) GetFeedShuffle(w http.ResponseWriter, r *http.Request) {
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 25 {
+			limit = parsed
+		}
+	}
+
+	// Get session ID from cookie
+	sessionID := ""
+	cookie, err := r.Cookie(auth.SessionCookieName)
+	if err == nil && cookie.Value != "" {
+		sessionID = cookie.Value
+	}
+
+	// Get recently shown clip IDs for this session (last 50)
+	var recentClipIDs []string
+	if sessionID != "" {
+		h.db.Model(&models.SessionFeedState{}).
+			Where("session_id = ?", sessionID).
+			Order("shown_at DESC").
+			Limit(50).
+			Pluck("clip_id", &recentClipIDs)
+	}
+
+	// Get all ready clips, excluding recently shown ones
+	query := h.db.Model(&models.ClipAsset{}).
+		Select(`clip_assets.*, media_items.title, users.username as owner_name,
+COALESCE(clip_personas.slug, item_personas.slug) as persona_slug,
+COALESCE(clip_personas.display_name, item_personas.display_name) as persona_display_name,
+COALESCE(NULLIF(clip_personas.avatar_path, ''), NULLIF(item_personas.avatar_path, '')) as persona_avatar_path`).
+		Joins("JOIN media_items ON media_items.id = clip_assets.item_id").
+		Joins("JOIN users ON users.id = media_items.user_id").
+		Joins("LEFT JOIN personas AS clip_personas ON clip_personas.id = clip_assets.persona_id").
+		Joins("LEFT JOIN personas AS item_personas ON item_personas.id = media_items.persona_id").
+		Where("media_items.deleted_at IS NULL").
+		Where("clip_assets.status = ?", models.ClipStatusReady)
+
+	// Exclude recently shown clips
+	if len(recentClipIDs) > 0 {
+		query = query.Where("clip_assets.id NOT IN (?)", recentClipIDs)
+	}
+
+	var clips []struct {
+		models.ClipAsset
+		Title              string
+		OwnerName          string
+		PersonaSlug        *string
+		PersonaDisplayName *string
+		PersonaAvatarPath  *string
+	}
+
+	if err := query.Find(&clips).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get feed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// If we've exhausted all clips, reset the history and start fresh
+	if len(clips) < limit {
+		// Clear old history to allow repeats after exhausting the pool
+		if sessionID != "" {
+			h.db.Where("session_id = ?", sessionID).Delete(&models.SessionFeedState{})
+		}
+		// Re-fetch without exclusion
+		if err := query.Find(&clips).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get feed: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Shuffle the clips
+	rand.Shuffle(len(clips), func(i, j int) {
+		clips[i], clips[j] = clips[j], clips[i]
+	})
+
+	// Take the requested limit
+	if len(clips) > limit {
+		clips = clips[:limit]
+	}
+
+	// Record these clips as shown
+	user := auth.GetUser(r.Context())
+	if sessionID != "" && len(clips) > 0 {
+		now := time.Now().UTC()
+		for _, clip := range clips {
+			feedState := models.SessionFeedState{
+				SessionID: sessionID,
+				ClipID:    clip.ID,
+				ShownAt:   now,
+				CreatedAt: now,
+			}
+			h.db.Create(&feedState)
+		}
+		// Cleanup old entries (keep last 100 per session)
+		h.db.Exec(`
+			DELETE FROM session_feed_states 
+			WHERE session_id = ? 
+			AND id NOT IN (
+				SELECT id FROM session_feed_states 
+				WHERE session_id = ? 
+				ORDER BY shown_at DESC 
+				LIMIT 100
+			)
+		`, sessionID, sessionID)
+	}
+
+	var responses []ShortsClipResponse
+	for _, clip := range clips {
+		thumbURL := ""
+		assetsMeta, _ := meta.ReadAssetsMetaByID(h.mediaRoot, clip.ItemID)
+		if assetsMeta != nil && len(assetsMeta.Thumbnails) > 0 {
+			thumbURL = thumbnailURL(clip.ItemID, assetsMeta.Thumbnails[0])
+		}
+
+		var upCount, downCount int64
+		h.db.Model(&models.Reaction{}).Where("item_id = ? AND value = 1", clip.ItemID).Count(&upCount)
+		h.db.Model(&models.Reaction{}).Where("item_id = ? AND value = -1", clip.ItemID).Count(&downCount)
+
+		var userReaction *int
+		if user != nil {
+			var reaction models.Reaction
+			if err := h.db.Where("user_id = ? AND item_id = ?", user.ID, clip.ItemID).First(&reaction).Error; err == nil {
+				userReaction = &reaction.Value
+			}
+		}
+
+		status := clip.Status
+		videoURL := ""
+		if status == models.ClipStatusReady {
+			videoURL = "/media/" + clip.ItemID + "/derived/short_" + clip.ID + ".mp4"
+		}
+
+		var personaAvatarURL *string
+		if clip.PersonaAvatarPath != nil && *clip.PersonaAvatarPath != "" {
+			avatar := "/media/avatars/" + *clip.PersonaAvatarPath
+			personaAvatarURL = &avatar
+		}
+
+		responses = append(responses, ShortsClipResponse{
+			ClipID:             clip.ID,
+			ItemID:             clip.ItemID,
+			VideoURL:           videoURL,
+			ThumbURL:           thumbURL,
+			Title:              clip.Title,
+			Description:        clip.Description,
+			OwnerName:          clip.OwnerName,
+			PersonaID:          clip.PersonaID,
+			PersonaSlug:        clip.PersonaSlug,
+			PersonaDisplayName: clip.PersonaDisplayName,
+			PersonaAvatarURL:   personaAvatarURL,
+			UpCount:            int(upCount),
+			DownCount:          int(downCount),
+			UserReaction:       userReaction,
+			CreatedAt:          clip.CreatedAt.Format(time.RFC3339),
+			Status:             status,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(ListShortsResponse{
+		Clips:   responses,
+		Cursor:  "",
+		HasMore: false,
+	}); err != nil {
+		logging.Error.Printf("Failed to encode feed response: %v", err)
 	}
 }
