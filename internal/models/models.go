@@ -189,3 +189,17 @@ type SchemaVersion struct {
 	Key   string `gorm:"primaryKey;size:100" json:"key"`
 	Value int    `gorm:"not null" json:"value"`
 }
+
+// SessionFeedState tracks recently shown shorts in the feed for a session to prevent repeats.
+type SessionFeedState struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	SessionID string    `gorm:"size:128;index;not null" json:"session_id"`
+	ClipID    string    `gorm:"size:26;index;not null" json:"clip_id"`
+	ShownAt   time.Time `gorm:"index;not null" json:"shown_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// FeedHistoryRequest is used to record that a clip was shown in the feed.
+type FeedHistoryRequest struct {
+	ClipID string `json:"clip_id"`
+}

@@ -206,6 +206,11 @@ func serveCommand(cfg *config.Config) *cli.Command {
 					return
 				}
 
+				if path == "/api/shorts/feed" && r.Method == "GET" {
+					h.GetFeedShuffle(w, r)
+					return
+				}
+
 				if path == "/api/playlists" {
 					if r.Method == "GET" {
 						h.ListPlaylists(w, r)

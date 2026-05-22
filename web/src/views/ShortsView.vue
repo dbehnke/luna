@@ -184,9 +184,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { listShorts, setReaction, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug } from '../services/api'
+import { listShorts, getShortsFeed, setReaction, getPersonaDisplayName, getPersonaAvatarUrl, getPersonaSlug } from '../services/api'
 import PersonaBadge from '../components/PersonaBadge.vue'
 
 const route = useRoute()
@@ -202,6 +202,11 @@ const videoPlayer = ref(null)
 const touchStartY = ref(0)
 const targetClipId = ref(null)
 const viewMode = ref('feed')
+
+// Determine which API to use based on view mode
+function getApiFunction() {
+  return viewMode.value === 'feed' ? getShortsFeed : listShorts
+}
 
 function findClipIndex(clips, clipId) {
   return clips.findIndex(c => c.clip_id === clipId)
@@ -220,7 +225,8 @@ function jumpToClip(clipId) {
 async function loadMoreWithTarget(targetClip) {
   loading.value = true
   try {
-    const result = await listShorts({
+    const apiFn = getApiFunction()
+    const result = await apiFn({
       limit: 10,
       cursor: cursor.value
     })
@@ -250,7 +256,8 @@ async function loadShorts(append = false) {
   error.value = ''
 
   try {
-    const result = await listShorts({
+    const apiFn = getApiFunction()
+    const result = await apiFn({
       limit: 10,
       cursor: append ? cursor.value : undefined
     })
@@ -291,6 +298,18 @@ async function loadShorts(append = false) {
 async function loadMore() {
   await loadShorts(true)
 }
+
+// Watch for view mode changes and reload clips
+watch(viewMode, async (newMode, oldMode) => {
+  if (newMode !== oldMode) {
+    // Reset state when switching modes
+    clips.value = []
+    cursor.value = ''
+    hasMore.value = false
+    currentIndex.value = 0
+    await loadShorts(false)
+  }
+})
 
 function playCurrent() {
   const video = videoPlayer.value?.[0]
